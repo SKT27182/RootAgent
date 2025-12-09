@@ -1,7 +1,8 @@
 import json
+import traceback
 from typing import List, Optional
 from src.llm import LLMClient
-from src.executor import CodeExecutor
+from src.executor import CodeExecutor, FinalAnswerException
 from src.schema import AgentStep, Thought, Plan, CodeBlob, FinalAnswer
 from src.prompts import SYSTEM_PROMPT
 from src.config import Config
@@ -64,11 +65,23 @@ class Agent:
             # 1. Call LLM
             # We want strict JSON.
             try:
-                response_json = self.llm.generate(messages, schema=AgentStep.model_json_schema())
+                # Pass the Pydantic class directly
+                # Disable reasoning for OpenRouter/Nova compatibility
+                response_obj = self.llm.generate(
+                    messages, 
+                    schema=AgentStep,
+                    extra_body={"reasoning": {"effort": "none"}}
+                )
+                
+                # Convert back to dict for existing logic compatibility
+                if hasattr(response_obj, 'model_dump'):
+                    response_json = response_obj.model_dump()
+                else:
+                    response_json = response_obj
                 
                 # If wrapped in 'step' key or not, handle both if pydantic didn't handle it.
                 # Our prompt asks for: {"step": {...}}
-                # LLMClient returns dict if schema was passed and parsed successfully.
+                # But AgentStep model has 'step' field, so model_dump will return {"step": {...}}
                 
                 if isinstance(response_json, dict) and "step" in response_json:
                     step_data = response_json["step"]
@@ -76,11 +89,14 @@ class Agent:
                     # Fallback or error
                     step_data = response_json
                 
-                # Validate with Pydantic (optional but good for safety)
-                # step_obj = AgentStep.model_validate(response_json) # Skipping strict validation for now to be flexible
-                
                 # Append assistant message
-                messages.append({"role": "assistant", "content": json.dumps(response_json)})
+                # Use model_dump_json if available for cleaner string serialization
+                if hasattr(response_obj, 'model_dump_json'):
+                    msg_content = response_obj.model_dump_json()
+                else:
+                    msg_content = json.dumps(response_json)
+                    
+                messages.append({"role": "assistant", "content": msg_content})
                 
                 step_type = step_data.get("type")
                 
@@ -96,6 +112,11 @@ class Agent:
                         if self.verbose:
                             print(f"Executing Code:\n{code}")
                         observation = self.executor.execute(code)
+                        
+                        # Check for FinalAnswer signal
+                        if isinstance(observation, FinalAnswerException):
+                            return str(observation.answer)
+                            
                         if self.verbose:
                             print(f"Observation: {observation}")
                         
@@ -106,15 +127,18 @@ class Agent:
                 
                 elif step_type in ["thought", "plan"]:
                     # Just reasoning, continue
-                    pass
+                    if self.verbose:
+                        print(f"Reasoning: {step_data.get('content')}")
+                    # Append a user message to avoid "Assistant prefill" error on next turn if reasoning is used
+                    messages.append({"role": "user", "content": "Proceed"})
                 
                 step_count += 1
                 
-            except Exception as e:
+            except Exception:
                 if self.verbose:
-                    print(f"Error in step {step_count}: {e}")
+                    print(f"Error in step {step_count}: {traceback.format_exc()}")
                 # Provide feedback to agent?
-                messages.append({"role": "user", "content": f"Error parsing your previous response: {e}. Please ensure valid JSON."})
+                messages.append({"role": "user", "content": f"Error parsing your previous response: {traceback.format_exc()}. Please ensure valid JSON."})
                 step_count += 1
                 
         return "Agent reached maximum steps without a final answer."
