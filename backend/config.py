@@ -1,9 +1,12 @@
 import os
 from dotenv import load_dotenv
+from backend.utils.logger import create_logger
 
 # Load environment variables from .env file
 load_dotenv()
 DEFAULT_MODEL_NAME = "gemini/gemini-2.5-flash"
+
+logger = create_logger(__name__, level="debug")
 
 class Config:
     # API Keys
@@ -17,7 +20,7 @@ class Config:
     @classmethod
     def validate(cls):
         if not cls.LLM_API_KEY:
-            print("WARNING: No LLM_API_KEY or provider key found.")
+            logger.warning("No LLM_API_KEY or provider key found.")
         
         # Ensure GEMINI_API_KEY is set for LiteLLM if we have a key and using Gemini
         if cls.LLM_API_KEY and "gemini" in cls.DEFAULT_MODEL.lower():

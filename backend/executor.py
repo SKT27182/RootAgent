@@ -1,6 +1,10 @@
 from typing import Any, Dict, List
 from smolagents import LocalPythonExecutor
 
+from backend.utils.logger import create_logger
+
+logger = create_logger(__name__, level="debug")
+
 class FinalAnswerException(Exception):
     def __init__(self, answer):
         self.answer = answer
@@ -46,4 +50,5 @@ class CodeExecutor:
             if hasattr(e, "__context__") and isinstance(e.__context__, FinalAnswerException):
                 return e.__context__
             
+            logger.error(f"Execution Error: {str(e)}")
             return f"Execution Error: {str(e)}"
