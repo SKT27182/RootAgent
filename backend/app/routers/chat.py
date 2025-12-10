@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional, Any
 from backend.app.models.chat import Session, Message, ChatRequest, ChatResponse
-from backend.app.agent.agent import Agent
+# from backend.app.agent.agent import Agent # Removed, used via AgentManager
 from backend.app.services.redis_store import RedisStore
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
@@ -17,15 +17,19 @@ logger = create_logger(__name__, level=Config.LOG_LEVEL)
 def get_redis_store():
     return RedisStore()
 
-# Dependency for Agent
-def get_agent():
-    return Agent()
+from backend.app.services.agent_manager import AgentManager
+
+# Dependency for AgentManager
+# We can just instantiate it since it's a singleton, or use a dependency.
+# Using a simple function to get the singleton.
+def get_agent_manager():
+    return AgentManager()
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
     redis_store: RedisStore = Depends(get_redis_store),
-    agent: Agent = Depends(get_agent)
+    agent_manager: AgentManager = Depends(get_agent_manager)
 ):
     """
     Endpoint for chat interaction.
@@ -66,6 +70,9 @@ async def chat_endpoint(
         
         # Get history to pass to agent
         history = redis_store.get_session_history(user_id, session_id)
+        
+        # Get or create persistent agent
+        agent = agent_manager.get_agent(session_id)
         
         response_text = agent.run(
             query=query, 
