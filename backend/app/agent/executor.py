@@ -43,7 +43,25 @@ class CodeExecutor:
             logger.info("Executing code...")
             result = self.executor(code)
             logger.info("Execution successful.")
-            return str(result)
+            
+            # Format output for Agent consumption
+            # smolagents returns (output, logs, error) or object with these fields?
+            # Based on logs it returns a named tuple or object str: CodeOutput(output=..., logs=..., ...)
+            # We want to return logs + output.
+            
+            final_output = ""
+            if hasattr(result, 'logs') and result.logs:
+                final_output += str(result.logs)
+            
+            if hasattr(result, 'output') and result.output is not None:
+                # If output exists (last expression value), append it if not None
+                final_output += str(result.output)
+            
+            # If everything empty (e.g. valid code but no print/return), returns empty string?
+            if not final_output and not result:
+                 return "Execution successful (no output)."
+            
+            return final_output.strip() if final_output else str(result)
         except FinalAnswerException as fa:
             return fa
         except Exception as e:
