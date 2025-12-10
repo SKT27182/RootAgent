@@ -7,3 +7,6 @@ redis
 fakeredis
 python-multipart
 pytest
+jinja2
+python-dotenv
+httpx

@@ -15,7 +15,7 @@ logger = create_logger(__name__, level=Config.LOG_LEVEL)
 # Dependency for Redis Store
 @lru_cache()
 def get_redis_store():
-    return RedisStore(host="localhost", port=6379)
+    return RedisStore()
 
 # Dependency for Agent
 def get_agent():
@@ -63,7 +63,17 @@ async def chat_endpoint(
     try:
         # Run Agent
         logger.info(f"Running agent for session {session_id}")
-        response_text = agent.run(query=query, images=images, user_id=user_id, session_id=session_id)
+        
+        # Get history to pass to agent
+        history = redis_store.get_session_history(user_id, session_id)
+        
+        response_text = agent.run(
+            query=query, 
+            images=images, 
+            user_id=user_id, 
+            session_id=session_id,
+            history=history
+        )
         
         # Create Assistant Message
         assistant_message = Message(

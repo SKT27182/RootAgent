@@ -2,6 +2,7 @@ import json
 import traceback
 from typing import List, Optional
 from backend.app.agent.llm import LLMClient
+from backend.app.models.chat import Message
 from backend.app.agent.constants import AUTHORIZED_IMPORTS
 from backend.app.agent.executor import CodeExecutor, FinalAnswerException
 from backend.app.agent.prompts import SYSTEM_PROMPT_TEMPLATE
@@ -10,6 +11,8 @@ from backend.app.utils.logger import create_logger
 from jinja2 import Template
 import re
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
+CODE_BLOCK_OPENING_TAG = "```python"
+CODE_BLOCK_CLOSING_TAG = "```"
 
 class Agent:
     def __init__(self, model_name: str = Config.DEFAULT_MODEL, api_key: Optional[str] = None):
@@ -18,7 +21,7 @@ class Agent:
         self.buffer = []  # Document history
         self.max_steps = 15
 
-    def _initialize_messages(self, query: str, images: Optional[List[str]] = None, csv_data: Optional[str] = None) -> List[dict]:
+    def _initialize_messages(self, query: str, history: List[Message] = [], images: Optional[List[str]] = None, csv_data: Optional[str] = None) -> List[dict]:
         """Initialize the conversation messages."""
         authorized_imports = str(AUTHORIZED_IMPORTS)
         # Render system prompt
@@ -27,11 +30,15 @@ class Agent:
             authorized_imports=authorized_imports,
             tools={},
             managed_agents={},
-            code_block_opening_tag="```python",
-            code_block_closing_tag="```"
+            code_block_opening_tag=CODE_BLOCK_OPENING_TAG,
+            code_block_closing_tag=CODE_BLOCK_CLOSING_TAG
         )
         
         messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add history
+        for msg in history:
+            messages.append({"role": msg.role, "content": msg.content})
         
         user_content = [{"type": "text", "text": query}]
         
@@ -93,14 +100,14 @@ class Agent:
             
         return step_data
 
-    def run(self, query: str, images: Optional[List[str]] = None, csv_data: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, **kwargs) -> str:
+    def run(self, query: str, images: Optional[List[str]] = None, csv_data: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, history: List[Message] = [], **kwargs) -> str:
         """
         Main ReAct loop.
         """
         logger.info(f"Starting session for user={user_id}, session={session_id}")
         logger.debug(f"Query: {query}")
         
-        messages = self._initialize_messages(query, images, csv_data)
+        messages = self._initialize_messages(query, history, images, csv_data)
         
         step_count = 0
         while step_count < self.max_steps:
@@ -135,21 +142,12 @@ class Agent:
                     obs_msg = f"Observation: {observation}"
                     messages.append({"role": "user", "content": obs_msg})
                 else:
-                    # If no code, maybe it's just a thought or the model failed to format code.
-                    # We can prompt it to continue or check if it thinks it's done.
-                    # But usually the loop relies on code execution to progress.
-                    # If it just output text without code, we treat it as a thought and let it continue?
-                    # Or we might need to nudge it. 
-                    # For now, let's just append "Proceed" if provided no code, or maybe the model is just chatting.
-                    if "Final Answer" in step_data["thought"]:
-                         # Fallback if model just writes "Final Answer: ..." without code
-                         # But the prompt strict instruction is to use final_answer tool.
-                         pass
-                    
-                    # If we didn't execute code, we should probably just loop again?
-                    # But without new user input (Observation), the model might repeat itself.
-                    # So we push a dummy message? Or just rely on self-reflection?
-                    messages.append({"role": "user", "content": "Proceed"})
+                    # Fallback: if no code was found, strictly prompt for it.
+                    logger.warning("No code block found in LLM response.")
+                    messages.append({
+                        "role": "user", 
+                        "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block."
+                    })
                 
                 step_count += 1
                 
@@ -158,4 +156,9 @@ class Agent:
                 messages.append({"role": "user", "content": f"system error: {traceback.format_exc()}"})
                 step_count += 1
                 
-        return "Agent reached maximum steps without a final answer."
+        # If we reach here without returning, check if the last message was a thought that looked like an answer
+        last_thought = messages[-1].get("content", "")
+        if step_count >= self.max_steps:
+             return "Agent reached maximum steps without a final answer."
+             
+        return "Agent finished without a final answer."

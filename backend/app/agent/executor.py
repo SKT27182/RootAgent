@@ -40,9 +40,9 @@ class CodeExecutor:
         Returns the stdout/result or specific FinalAnswer object.
         """
         try:
-            logger.info("Executing code...")
+            logger.debug("Executing code...")
             result = self.executor(code)
-            logger.info("Execution successful.")
+            logger.debug("Execution successful.")
             
             # Format output for Agent consumption
             # smolagents returns (output, logs, error) or object with these fields?

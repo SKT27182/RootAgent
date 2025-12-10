@@ -18,6 +18,12 @@ class Config:
     
     # Logging
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "debug")
+
+    # Redis
+    REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+    REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
+    REDIS_SSL = os.environ.get("REDIS_SSL", "false").lower() == "true"
     
     # Validation
     @classmethod

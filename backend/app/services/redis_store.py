@@ -9,14 +9,21 @@ import os
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 class RedisStore:
-    def __init__(self, host: str = "localhost", port: int = 6379, db: int = 0):
+    def __init__(self, host: str = Config.REDIS_HOST, port: int = Config.REDIS_PORT, password: Optional[str] = Config.REDIS_PASSWORD, ssl: bool = Config.REDIS_SSL, db: int = 0):
         try:
-            logger.info(f"Connecting to Redis at {host}:{port}, db={db}")
-            self.redis_client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+            logger.info(f"Connecting to Redis at {host}:{port}, db={db}, ssl={ssl}")
+            self.redis_client = redis.Redis(
+                host=host, 
+                port=port, 
+                db=db, 
+                password=password,
+                ssl=ssl,
+                decode_responses=True
+            )
             self.redis_client.ping()
             logger.info("Successfully connected to Redis.")
-        except (redis.ConnectionError, redis.exceptions.ConnectionError):
-            logger.warning("Could not connect to real Redis. Using fakeredis for local development.")
+        except (redis.ConnectionError, redis.exceptions.ConnectionError) as e:
+            logger.warning(f"Could not connect to Redis: {e}. Using fakeredis for local development.")
             import fakeredis
             self.redis_client = fakeredis.FakeRedis(decode_responses=True)
 
