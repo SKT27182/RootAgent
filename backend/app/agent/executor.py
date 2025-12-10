@@ -1,9 +1,10 @@
 from typing import Any, Dict, List
 from smolagents import LocalPythonExecutor
 
-from backend.utils.logger import create_logger
+from backend.app.core.config import Config
+from backend.app.utils.logger import create_logger
 
-logger = create_logger(__name__, level="debug")
+logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 class FinalAnswerException(Exception):
     def __init__(self, answer):

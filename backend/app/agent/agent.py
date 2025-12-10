@@ -1,13 +1,13 @@
 import json
 import traceback
 from typing import List, Optional
-from backend.llm import LLMClient
-from backend.executor import CodeExecutor, FinalAnswerException
-from backend.schema import AgentStep, Thought, Plan, CodeBlob, FinalAnswer
-from backend.prompts import SYSTEM_PROMPT
-from backend.config import Config
-from backend.utils.logger import create_logger
-logger = create_logger(__name__, level="debug")
+from backend.app.agent.llm import LLMClient
+from backend.app.agent.executor import CodeExecutor, FinalAnswerException
+from backend.app.agent.schema import AgentStep, Thought, Plan, CodeBlob, FinalAnswer
+from backend.app.agent.prompts import SYSTEM_PROMPT
+from backend.app.core.config import Config
+from backend.app.utils.logger import create_logger
+logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 class Agent:
     def __init__(self, model_name: str = Config.DEFAULT_MODEL, api_key: Optional[str] = None):

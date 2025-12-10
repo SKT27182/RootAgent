@@ -3,10 +3,10 @@ from typing import Any, Dict, Optional, Union, Type
 import litellm
 from litellm import completion
 from pydantic import BaseModel
-from backend.config import Config
-from backend.utils.logger import create_logger
+from backend.app.core.config import Config
+from backend.app.utils.logger import create_logger
 
-logger = create_logger(__name__, level="debug")
+logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 class LLMClient:
     def __init__(self, model: str = Config.DEFAULT_MODEL, api_key: Optional[str] = None):

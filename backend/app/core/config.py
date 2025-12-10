@@ -1,12 +1,12 @@
 import os
 from dotenv import load_dotenv
-from backend.utils.logger import create_logger
+from backend.app.utils.logger import create_logger
 
 # Load environment variables from .env file
 load_dotenv()
 DEFAULT_MODEL_NAME = "gemini/gemini-2.5-flash"
 
-logger = create_logger(__name__, level="debug")
+logger = create_logger(__name__, level=os.environ.get("LOG_LEVEL", "debug"))
 
 class Config:
     # API Keys
@@ -15,6 +15,9 @@ class Config:
     
     # Model Defaults
     DEFAULT_MODEL = os.environ.get("LLM_MODEL", DEFAULT_MODEL_NAME)
+    
+    # Logging
+    LOG_LEVEL = os.environ.get("LOG_LEVEL", "debug")
     
     # Validation
     @classmethod
