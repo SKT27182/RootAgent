@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 from smolagents import LocalPythonExecutor
 
+from backend.app.agent.constants import AUTHORIZED_IMPORTS
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 
@@ -27,7 +28,7 @@ class CodeExecutor:
         
         # LocalPythonExecutor is designed to be safe by default
         self.executor = LocalPythonExecutor(
-            additional_authorized_imports=["math", "datetime", "re", "json", "numpy"],
+            additional_authorized_imports=AUTHORIZED_IMPORTS,
             additional_functions=builtins
         )
         # CRITICAL: Must call send_tools to merge additional_functions into static_tools
@@ -39,7 +40,9 @@ class CodeExecutor:
         Returns the stdout/result or specific FinalAnswer object.
         """
         try:
+            logger.info("Executing code...")
             result = self.executor(code)
+            logger.info("Execution successful.")
             return str(result)
         except FinalAnswerException as fa:
             return fa
