@@ -15,15 +15,17 @@ class AgentManager:
             cls._instance._agents = {}
         return cls._instance
 
-    def get_agent(self, session_id: str) -> Agent:
+    def get_agent(self, session_id: str, previous_definitions: Dict[str, str] = None) -> Agent:
         """
         Retrieve an existing agent for the session or create a new one.
         """
         if session_id not in self._agents:
             logger.info(f"Creating new Agent for session: {session_id}")
-            self._agents[session_id] = Agent()
+            self._agents[session_id] = Agent(previous_definitions=previous_definitions)
         else:
             logger.info(f"Reusing existing Agent for session: {session_id}")
+            # Optional: if we wanted to enforce syncing, we could update the existing agent here,
+            # but usually the in-memory agent is more up to date than redis if consistent.
             
         return self._agents[session_id]
 

@@ -1,6 +1,6 @@
 import json
 import redis
-from typing import List, Optional
+from typing import List, Optional, Dict
 from backend.app.models.chat import Message, Session
 from backend.app.utils.logger import create_logger
 from backend.app.core.config import Config
@@ -45,3 +45,22 @@ class RedisStore:
         key = self._get_session_key(user_id, session_id)
         logger.info(f"Clearing session {key}")
         self.redis_client.delete(key)
+        self.redis_client.delete(f"{key}:functions")
+
+    def save_functions(self, user_id: str, session_id: str, functions: Dict[str, str]):
+        """
+        Save the dictionary of function names and their source code to Redis.
+        """
+        key = f"{self._get_session_key(user_id, session_id)}:functions"
+        if functions:
+            self.redis_client.hset(key, mapping=functions)
+            logger.debug(f"Saved {len(functions)} functions to {key}")
+
+    def get_functions(self, user_id: str, session_id: str) -> Dict[str, str]:
+        """
+        Retrieve all defined functions for the session.
+        """
+        key = f"{self._get_session_key(user_id, session_id)}:functions"
+        functions = self.redis_client.hgetall(key)
+        logger.debug(f"Retrieved {len(functions)} functions from {key}")
+        return functions

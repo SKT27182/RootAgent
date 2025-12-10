@@ -1,4 +1,6 @@
 from typing import Any, Dict, List
+import ast
+import textwrap
 from smolagents import LocalPythonExecutor
 
 from backend.app.agent.constants import AUTHORIZED_IMPORTS
@@ -14,8 +16,39 @@ class FinalAnswerException(Exception):
 def final_answer(answer):
     raise FinalAnswerException(answer)
 
+
+def extract_functions_from_string(code_str: str) -> Dict[str, str]:
+    """
+    Extracts all top-level function definitions from a Python code string.
+    Returns a dict: {function_name: function_source_code}
+    """
+    code_str = textwrap.dedent(code_str)
+    try:
+        tree = ast.parse(code_str)
+    except SyntaxError:
+        return {}
+
+    functions = {}
+
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            # AST stores start and end line numbers
+            start = node.lineno - 1
+            end = node.end_lineno
+            
+            # Extract the exact function text
+            # splitlines behaves differently if last line has newline or not
+            lines = code_str.splitlines(keepends=True)
+            func_code = "".join(lines[start:end])
+            
+            functions[node.name] = func_code
+
+    return functions
+
 class CodeExecutor:
-    def __init__(self):
+    def __init__(self, additional_functions: Dict[str, Any] = {}):
+        self.defined_functions = {}  # Track functions defined across executions
+
         # Standard built-ins to allow
         builtins = {
             "print": print, "range": range, "len": len,
@@ -26,19 +59,29 @@ class CodeExecutor:
             "final_answer": final_answer
         }
         
+        # Merge provided functions with builtins (builtins take precedence primarily, but actually we want tools to be available)
+        # We'll merge them into builtins so they are available in the global scope of the executor
+        builtins.update(additional_functions)
+
         # LocalPythonExecutor is designed to be safe by default
         self.executor = LocalPythonExecutor(
             additional_authorized_imports=AUTHORIZED_IMPORTS,
             additional_functions=builtins
         )
         # CRITICAL: Must call send_tools to merge additional_functions into static_tools
-        self.executor.send_tools({})
+        self.executor.send_tools(additional_functions)
 
     def execute(self, code: str) -> Any:
         """
         Executes unrestricted python code using LocalPythonExecutor.
         Returns the stdout/result or specific FinalAnswer object.
         """
+        # Extract new functions from this code block
+        new_functions = extract_functions_from_string(code)
+        if new_functions:
+            self.defined_functions.update(new_functions)
+            logger.debug(f"Extracted functions: {list(new_functions.keys())}")
+
         try:
             logger.debug("Executing code...")
             result = self.executor(code)

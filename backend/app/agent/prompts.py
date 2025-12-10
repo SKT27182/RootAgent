@@ -137,6 +137,15 @@ Above examples were using notional tools that might not exist for you. On top of
 {% endfor %}
 {{code_block_closing_tag}}
 
+{%- if self_defined_functions and self_defined_functions.values() | list %}
+You also have access to functions that you defined in previous steps. You can use them directly:
+{{code_block_opening_tag}}
+{%- for name, code in self_defined_functions.items() %}
+{{ code }}
+{% endfor %}
+{{code_block_closing_tag}}
+{%- endif %}
+
 {%- if managed_agents and managed_agents.values() | list %}
 You can also give tasks to team members.
 Calling a team member works similarly to calling a tool: provide the task description as the 'task' argument. Since this team member is a real human, be as detailed and verbose as necessary in your task description.
