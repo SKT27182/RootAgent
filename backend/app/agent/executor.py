@@ -17,18 +17,19 @@ def final_answer(answer):
     raise FinalAnswerException(answer)
 
 
-def extract_functions_from_string(code_str: str) -> Dict[str, str]:
+def extract_definitions(code_str: str) -> tuple[Dict[str, str], List[str]]:
     """
-    Extracts all top-level function definitions from a Python code string.
-    Returns a dict: {function_name: function_source_code}
+    Extracts all top-level function definitions and import statements from a Python code string.
+    Returns a tuple: ({function_name: function_source_code}, [import_statements])
     """
     code_str = textwrap.dedent(code_str)
     try:
         tree = ast.parse(code_str)
     except SyntaxError:
-        return {}
+        return {}, []
 
     functions = {}
+    imports = []
 
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
@@ -42,12 +43,20 @@ def extract_functions_from_string(code_str: str) -> Dict[str, str]:
             func_code = "".join(lines[start:end])
             
             functions[node.name] = func_code
+            
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            start = node.lineno - 1
+            end = node.end_lineno
+            lines = code_str.splitlines(keepends=True)
+            import_code = "".join(lines[start:end]).strip()
+            imports.append(import_code)
 
-    return functions
+    return functions, imports
 
 class CodeExecutor:
     def __init__(self, additional_functions: Dict[str, Any] = {}):
         self.defined_functions = {}  # Track functions defined across executions
+        self.defined_imports = set() # Track imports defined across executions
 
         # Standard built-ins to allow
         builtins = {
@@ -77,11 +86,15 @@ class CodeExecutor:
         Returns the stdout/result or specific FinalAnswer object.
         """
         # Extract new functions from this code block
-        new_functions = extract_functions_from_string(code)
+        new_functions, new_imports = extract_definitions(code)
         if new_functions:
             self.defined_functions.update(new_functions)
             logger.debug(f"Extracted functions: {list(new_functions.keys())}")
-
+        if new_imports:
+            for imp in new_imports:
+                self.defined_imports.add(imp)
+            logger.debug(f"Extracted imports: {new_imports}")
+            
         try:
             logger.debug("Executing code...")
             result = self.executor(code)

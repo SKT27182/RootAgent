@@ -1,6 +1,6 @@
 import json
 import traceback
-from typing import List, Optional, Callable, Dict
+from typing import List, Optional, Callable, Dict, Set, Tuple
 import inspect
 from backend.app.agent.llm import LLMClient
 from backend.app.models.chat import Message
@@ -46,34 +46,27 @@ class FunctionTool:
         return f"def {self.name}{sig_str}:\n    \"\"\"\n    {self.docstring.strip()}\n    \"\"\"\n"
 
 class Agent:
-    def __init__(self, model_name: str = Config.DEFAULT_MODEL, api_key: Optional[str] = None, additional_functions: Optional[Dict[str, Callable]] = None, previous_definitions: Optional[Dict[str, str]] = None):
+    def __init__(self, model_name: str = Config.DEFAULT_MODEL, api_key: Optional[str] = None, additional_functions: Optional[Dict[str, Callable]] = {}, previous_functions: Dict[str, str] = {}, previous_imports: Set[str] = set()):
         self.llm = LLMClient(model=model_name, api_key=api_key)
-        self.previous_definitions = previous_definitions or {}
         
-        # Hydrate previous definitions into callables
-        self.hydrated_functions = {}
-        if self.previous_definitions:
-            for name, code in self.previous_definitions.items():
-                try:
-                    # Execute code in a restricted/local scope to extract the function
-                    local_scope = {}
-                    exec(code, {}, local_scope)
-                    if name in local_scope and callable(local_scope[name]):
-                        self.hydrated_functions[name] = local_scope[name]
-                except Exception as e:
-                    logger.error(f"Failed to hydrate function {name}: {e}")
+        self.executor = CodeExecutor(additional_functions=additional_functions)
 
-        # Merge user-provided definitions with hydrated ones
-        # User defined ones take precedence if collision? Or hydrated?
-        # Let's say user provided ones (passed in code) take precedence.
-        all_functions = {**self.hydrated_functions}
-        if additional_functions:
-            all_functions.update(additional_functions)
+        injected_code = ""
 
-        self.executor = CodeExecutor(additional_functions=all_functions)
+        # Inject imports
+        if previous_imports:
+            injected_code += "\n".join(previous_imports) + "\n\n"
+            
+        logger.debug(f"Injected imports: {previous_imports}")  if previous_imports else logger.debug("No previous imports")
+        # Inject functions
+        for func_name, func_source in previous_functions.items():
+            injected_code += func_source + "\n\n"
+
+        self.executor.execute(injected_code)
+        logger.debug(f"Injected Previously defined functions: {list(self.executor.defined_functions.keys())}") if previous_functions else logger.debug("No previous function definitions")
         
-        # Pre-populate executor's defined_functions with the strings we have
-        self.executor.defined_functions.update(self.previous_definitions)
+        self.executor.defined_functions.update(previous_functions)
+        self.executor.defined_imports.update(previous_imports)
         
         self.buffer = []  # Document history
         self.max_steps = 15
@@ -89,11 +82,11 @@ class Agent:
             for name, func in additional_functions.items():
                 self.tools[name] = FunctionTool(func)
                 
-    def get_all_defined_functions(self) -> Dict[str, str]:
+    def get_all_defined_functions(self) -> Tuple[Set[str], Dict[str, str]]:
         """
         Returns all functions defined during the session (previous + new).
         """
-        return self.executor.defined_functions
+        return self.executor.defined_imports, self.executor.defined_functions
 
     def _initialize_messages(self, query: str, history: List[Message] = [], images: Optional[List[str]] = None, csv_data: Optional[str] = None) -> List[dict]:
         """Initialize the conversation messages."""

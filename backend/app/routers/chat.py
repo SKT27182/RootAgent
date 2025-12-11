@@ -72,11 +72,13 @@ async def chat_endpoint(
         history = redis_store.get_session_history(user_id, session_id)
         
         # Get persistent functions
-        previous_data = redis_store.get_functions(user_id, session_id)
-        logger.debug(f"Previous functions: {previous_data}")
+        previous_functions = redis_store.get_functions(user_id, session_id)
+        previous_imports = redis_store.get_imports(user_id, session_id)
+        logger.debug(f"Previous functions: {previous_functions}")
+        logger.debug(f"Previous imports: {previous_imports}")
         
         # Get or create persistent agent
-        agent = agent_manager.get_agent(session_id, previous_definitions=previous_data)
+        agent = agent_manager.get_agent(session_id, previous_functions=previous_functions, previous_imports=previous_imports)
         
         response_text = agent.run(
             query=query, 
@@ -88,8 +90,9 @@ async def chat_endpoint(
         
         # Save defined functions
         try:
-            current_functions = agent.get_all_defined_functions()
+            current_imports, current_functions = agent.get_all_defined_functions()
             redis_store.save_functions(user_id, session_id, current_functions)
+            redis_store.save_imports(user_id, session_id, current_imports)
             logger.debug(f"Current functions: {current_functions}")
         except Exception as ex:
              logger.warning(f"Failed to save functions: {ex}")

@@ -1,6 +1,6 @@
 import json
 import redis
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set
 from backend.app.models.chat import Message, Session
 from backend.app.utils.logger import create_logger
 from backend.app.core.config import Config
@@ -55,6 +55,8 @@ class RedisStore:
         if functions:
             self.redis_client.hset(key, mapping=functions)
             logger.debug(f"Saved {len(functions)} functions to {key}")
+        else:
+            logger.debug("No functions to save")
 
     def get_functions(self, user_id: str, session_id: str) -> Dict[str, str]:
         """
@@ -64,3 +66,17 @@ class RedisStore:
         functions = self.redis_client.hgetall(key)
         logger.debug(f"Retrieved {len(functions)} functions from {key}")
         return functions
+
+    def save_imports(self, user_id: str, session_id: str, imports: Set[str]):
+        key = f"{self._get_session_key(user_id, session_id)}:imports"
+        if imports:
+            self.redis_client.sadd(key, *imports)
+            logger.debug(f"Saved {len(imports)} imports to {key}")
+        else:
+            logger.debug("No imports to save")
+
+    def get_imports(self, user_id: str, session_id: str) -> Set[str]:
+        key = f"{self._get_session_key(user_id, session_id)}:imports"
+        imports = self.redis_client.smembers(key)
+        logger.debug(f"Retrieved {len(imports)} imports from {key}")
+        return imports
