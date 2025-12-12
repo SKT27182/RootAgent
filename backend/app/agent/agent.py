@@ -171,7 +171,6 @@ class Agent:
         """
         Main ReAct loop.
         """
-        logger.info(f"Starting session for user={user_id}, session={session_id}")
         logger.debug(f"Query: {query}")
         
         messages = self._initialize_messages(query, history, images, csv_data)

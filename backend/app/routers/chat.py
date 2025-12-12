@@ -43,10 +43,10 @@ async def chat_endpoint(
     logger.debug(f"Query: {query}")
 
     if not query:
-        logger.warning("Query missing in request.")
+        logger.error("Query missing in request.")
         raise HTTPException(status_code=400, detail="Query is required")
     if not user_id:
-        logger.warning("User ID missing in request.")
+        logger.error("User ID missing in request.")
         raise HTTPException(status_code=400, detail="User ID is required")
 
     # Generate session_id if not provided
@@ -66,14 +66,16 @@ async def chat_endpoint(
 
     try:
         # Run Agent
-        logger.info(f"Running agent for session {session_id}")
+        logger.debug(f"Running agent for session {session_id}")
         
         # Get history to pass to agent
         history = redis_store.get_session_history(user_id, session_id)
-        
+        logger.debug(f"Retrieved history: {history}")
+        logger.info(f"Retrieved {len(history)} messages from session {session_id}")
         # Get persistent functions
         previous_functions = redis_store.get_functions(user_id, session_id)
         previous_imports = redis_store.get_imports(user_id, session_id)
+        logger.info(f"Retrieved {len(previous_functions)} functions and {len(previous_imports)} imports from session {session_id}")
         logger.debug(f"Previous functions: {previous_functions}")
         logger.debug(f"Previous imports: {previous_imports}")
         

@@ -95,7 +95,7 @@ class CustomFormatter(logging.Formatter):
 
         # Create the log message without color first
         custom_format = (
-            "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s"
+            "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s"
         )
         formatter = logging.Formatter(custom_format, datefmt="%Y-%m-%d %H:%M:%S")
         log_message = formatter.format(formatted_record)
@@ -212,7 +212,7 @@ def create_logger(
         logger.addFilter(suppression_filter)
 
     custom_formatter = CustomFormatter(
-        "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(funcName)s - %(message)s",
+        "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 

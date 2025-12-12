@@ -11,7 +11,7 @@ logger = create_logger(__name__, level=Config.LOG_LEVEL)
 class RedisStore:
     def __init__(self, host: str = Config.REDIS_HOST, port: int = Config.REDIS_PORT, password: Optional[str] = Config.REDIS_PASSWORD, ssl: bool = Config.REDIS_SSL, db: int = 0):
         try:
-            logger.info(f"Connecting to Redis at {host}:{port}, db={db}, ssl={ssl}")
+            logger.debug(f"Connecting to Redis at {host}:{port}, db={db}, ssl={ssl}")
             self.redis_client = redis.Redis(
                 host=host, 
                 port=port, 
@@ -43,7 +43,7 @@ class RedisStore:
 
     def clear_session(self, user_id: str, session_id: str):
         key = self._get_session_key(user_id, session_id)
-        logger.info(f"Clearing session {key}")
+        logger.debug(f"Clearing session {key}")
         self.redis_client.delete(key)
         self.redis_client.delete(f"{key}:functions")
 
