@@ -9,6 +9,7 @@ class Message(BaseModel):
     role: str
     content: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    is_reasoning: bool = False
 
 
 class Session(BaseModel):
@@ -22,6 +23,7 @@ class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     images: Optional[List[str]] = []
+    include_reasoning: bool = False
 
 
 class ChatResponse(BaseModel):

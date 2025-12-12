@@ -1,6 +1,6 @@
 import json
 import traceback
-from typing import List, Optional, Callable, Dict, Set, Tuple
+from typing import List, Optional, Callable, Dict, Set, Tuple, Any
 import inspect
 from backend.app.agent.llm import LLMClient
 from backend.app.models.chat import Message
@@ -214,13 +214,19 @@ class Agent:
         session_id: Optional[str] = None,
         history: List[Message] = [],
         **kwargs,
-    ) -> str:
+    ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Main ReAct loop.
+        Returns:
+            final_answer: str
+            steps: List[Dict[str, Any]] - list of raw messages generated during the loop
         """
         logger.debug(f"Query: {query}")
 
         messages = self._initialize_messages(query, history, images, csv_data)
+
+        # Track where the new steps start
+        initial_message_count = len(messages)
 
         step_count = 0
         while step_count < self.max_steps:
@@ -247,7 +253,7 @@ class Agent:
 
                     # Check if it returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
-                        return str(observation.answer)
+                        return str(observation.answer), messages[initial_message_count:]
 
                     # Truncate observation if too long? For now keep it simple.
                     obs_msg = f"Observation: {observation}"
@@ -277,6 +283,12 @@ class Agent:
         # If we reach here without returning, check if the last message was a thought that looked like an answer
         last_thought = messages[-1].get("content", "")
         if step_count >= self.max_steps:
-            return "Agent reached maximum steps without a final answer."
+            return (
+                "Agent reached maximum steps without a final answer.",
+                messages[initial_message_count:],
+            )
 
-        return "Agent finished without a final answer."
+        return (
+            "Agent finished without a final answer.",
+            messages[initial_message_count:],
+        )

@@ -79,7 +79,9 @@ async def chat_endpoint(
         logger.debug(f"Running agent for session {session_id}")
 
         # Get history to pass to agent
-        history = redis_store.get_session_history(user_id, session_id)
+        history = redis_store.get_session_history(
+            user_id, session_id, include_reasoning=request.include_reasoning
+        )
         logger.debug(f"Retrieved history: {history}")
         logger.info(f"Retrieved {len(history)} messages from session {session_id}")
         # Get persistent functions
@@ -98,7 +100,7 @@ async def chat_endpoint(
             previous_imports=previous_imports,
         )
 
-        response_text = agent.run(
+        response_text, generated_steps = agent.run(
             query=None,  # Query is already in history
             images=None,  # Images are already in history
             user_id=user_id,
@@ -115,11 +117,27 @@ async def chat_endpoint(
         except Exception as ex:
             logger.warning(f"Failed to save functions: {ex}")
 
-        # Create Assistant Message
+        # Save Reasoning Steps
+        for step_msg in generated_steps:
+            # Ensure content is string
+            content_str = step_msg.get("content", "")
+            if not isinstance(content_str, str):
+                content_str = json.dumps(content_str)
+
+            reasoning_message = Message(
+                role=step_msg.get("role", "assistant"),
+                content=content_str,
+                timestamp=datetime.datetime.utcnow(),
+                is_reasoning=True,
+            )
+            redis_store.save_message(user_id, session_id, reasoning_message)
+
+        # Create Assistant Message (Final Answer)
         assistant_message = Message(
             role="assistant",
             content=response_text,
             timestamp=datetime.datetime.utcnow(),
+            is_reasoning=False,
         )
 
         # Save Assistant Message to Redis
@@ -139,7 +157,14 @@ async def chat_endpoint(
 
 @router.get("/history/{user_id}/{session_id}", response_model=List[Message])
 async def get_history(
-    user_id: str, session_id: str, redis_store: RedisStore = Depends(get_redis_store)
+    user_id: str,
+    session_id: str,
+    include_reasoning: bool = False,
+    redis_store: RedisStore = Depends(get_redis_store),
 ):
-    logger.info(f"Fetching history for user={user_id}, session={session_id}")
-    return redis_store.get_session_history(user_id, session_id)
+    logger.info(
+        f"Fetching history for user={user_id}, session={session_id}, include_reasoning={include_reasoning}"
+    )
+    return redis_store.get_session_history(
+        user_id, session_id, include_reasoning=include_reasoning
+    )

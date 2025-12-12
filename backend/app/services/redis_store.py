@@ -46,11 +46,20 @@ class RedisStore:
         logger.debug(f"Saving message to {key}: {message.message_id}")
         self.redis_client.rpush(key, message.model_dump_json())
 
-    def get_session_history(self, user_id: str, session_id: str) -> List[Message]:
+    def get_session_history(
+        self, user_id: str, session_id: str, include_reasoning: bool = False
+    ) -> List[Message]:
         key = self._get_session_key(user_id, session_id)
-        logger.debug(f"Retrieving history for {key}")
+        logger.debug(
+            f"Retrieving history for {key}, include_reasoning={include_reasoning}"
+        )
         messages_json = self.redis_client.lrange(key, 0, -1)
-        return [Message(**json.loads(msg)) for msg in messages_json]
+        messages = [Message(**json.loads(msg)) for msg in messages_json]
+
+        if not include_reasoning:
+            messages = [msg for msg in messages if not msg.is_reasoning]
+
+        return messages
 
     def clear_session(self, user_id: str, session_id: str):
         key = self._get_session_key(user_id, session_id)
