@@ -1,7 +1,7 @@
 import json
 from typing import Any, Dict, Optional, Union, Type
 import litellm
-from litellm import completion
+from litellm import acompletion
 from pydantic import BaseModel
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
@@ -16,14 +16,14 @@ class LLMClient:
         self.model = model
         self.api_key = api_key or Config.LLM_API_KEY
 
-    def generate(
+    async def agenerate(
         self,
         messages: list,
         schema: Optional[Union[Dict, Type[BaseModel]]] = None,
         **kwargs,
     ) -> Union[str, Dict, BaseModel]:
         """
-        Generates a response from the LLM.
+        Generates a response from the LLM asynchronously.
         If schema is provided, attempts to force JSON output (handled via prompting or provider specific features).
         """
         response_format = schema
@@ -34,7 +34,7 @@ class LLMClient:
 
         try:
             logger.debug(f"Generating response from model: {self.model}")
-            response = completion(
+            response = await acompletion(
                 model=self.model,
                 messages=messages,
                 api_key=self.api_key,

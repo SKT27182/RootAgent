@@ -72,21 +72,21 @@ async def chat_endpoint(
     )
 
     # Save User Message to Redis
-    redis_store.save_message(user_id, session_id, user_message)
+    await redis_store.save_message(user_id, session_id, user_message)
 
     try:
         # Run Agent
         logger.debug(f"Running agent for session {session_id}")
 
         # Get history to pass to agent
-        history = redis_store.get_session_history(
+        history = await redis_store.get_session_history(
             user_id, session_id, include_reasoning=request.include_reasoning
         )
         logger.debug(f"Retrieved history: {history}")
         logger.info(f"Retrieved {len(history)} messages from session {session_id}")
         # Get persistent functions
-        previous_functions = redis_store.get_functions(user_id, session_id)
-        previous_imports = redis_store.get_imports(user_id, session_id)
+        previous_functions = await redis_store.get_functions(user_id, session_id)
+        previous_imports = await redis_store.get_imports(user_id, session_id)
         logger.info(
             f"Retrieved {len(previous_functions)} functions and {len(previous_imports)} imports from session {session_id}"
         )
@@ -100,7 +100,7 @@ async def chat_endpoint(
             previous_imports=previous_imports,
         )
 
-        response_text, generated_steps = agent.run(
+        response_text, generated_steps = await agent.run(
             query=None,  # Query is already in history
             images=None,  # Images are already in history
             user_id=user_id,
@@ -111,8 +111,8 @@ async def chat_endpoint(
         # Save defined functions
         try:
             current_imports, current_functions = agent.get_all_defined_functions()
-            redis_store.save_functions(user_id, session_id, current_functions)
-            redis_store.save_imports(user_id, session_id, current_imports)
+            await redis_store.save_functions(user_id, session_id, current_functions)
+            await redis_store.save_imports(user_id, session_id, current_imports)
             logger.debug(f"Current functions: {current_functions}")
         except Exception as ex:
             logger.warning(f"Failed to save functions: {ex}")
@@ -130,7 +130,7 @@ async def chat_endpoint(
                 timestamp=datetime.datetime.utcnow(),
                 is_reasoning=True,
             )
-            redis_store.save_message(user_id, session_id, reasoning_message)
+            await redis_store.save_message(user_id, session_id, reasoning_message)
 
         # Create Assistant Message (Final Answer)
         assistant_message = Message(
@@ -141,7 +141,7 @@ async def chat_endpoint(
         )
 
         # Save Assistant Message to Redis
-        redis_store.save_message(user_id, session_id, assistant_message)
+        await redis_store.save_message(user_id, session_id, assistant_message)
 
         logger.info(f"Chat response sent for session {session_id}")
         return ChatResponse(
@@ -165,6 +165,6 @@ async def get_history(
     logger.info(
         f"Fetching history for user={user_id}, session={session_id}, include_reasoning={include_reasoning}"
     )
-    return redis_store.get_session_history(
+    return await redis_store.get_session_history(
         user_id, session_id, include_reasoning=include_reasoning
     )

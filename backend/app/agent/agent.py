@@ -174,11 +174,11 @@ class Agent:
 
         return messages
 
-    def _generate_step(self, messages: List[dict], **kwargs) -> str:
+    async def _generate_step(self, messages: List[dict], **kwargs) -> str:
         """Call LLM and return raw string response."""
         logger.debug(f"Calling LLM with messages: {json.dumps(messages, default=str)}")
 
-        response = self.llm.generate(
+        response = await self.llm.agenerate(
             messages, schema=None, **kwargs  # Disable JSON schema enforcement
         )
 
@@ -205,7 +205,7 @@ class Agent:
 
         return AgentStep(thought=thought, code=code)
 
-    def run(
+    async def run(
         self,
         query: Optional[str] = None,
         images: Optional[List[str]] = None,
@@ -232,7 +232,7 @@ class Agent:
         while step_count < self.max_steps:
             try:
                 # 1. Generate Step (Raw Text)
-                llm_response = self._generate_step(messages, **kwargs)
+                llm_response = await self._generate_step(messages, **kwargs)
                 logger.debug(f"LLM Response: {llm_response}")
 
                 # Append assistant message
