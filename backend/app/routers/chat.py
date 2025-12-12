@@ -8,7 +8,7 @@ from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 from backend.app.utils.utils import format_user_message
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from functools import lru_cache
 
@@ -63,16 +63,19 @@ async def chat_endpoint(
 
     # Create User Message
     # Format message content using helper
-    formatted_content = format_user_message(query, images)
+    formatted_content = format_user_message(query, images, request.csv_data)
 
     user_message = Message(
         role="user",
         content=json.dumps(formatted_content),
-        timestamp=datetime.now(datetime.UTC),
+        timestamp=datetime.now(timezone.utc),
     )
 
     # Save User Message to Redis
     await redis_store.save_message(user_id, session_id, user_message)
+
+    # Track session for user
+    await redis_store.add_user_session(user_id, session_id)
 
     try:
         # Run Agent
@@ -127,7 +130,7 @@ async def chat_endpoint(
             reasoning_message = Message(
                 role=step_msg.get("role", "assistant"),
                 content=content_str,
-                timestamp=datetime.now(datetime.UTC),
+                timestamp=datetime.now(timezone.utc),
                 is_reasoning=True,
             )
             await redis_store.save_message(user_id, session_id, reasoning_message)
@@ -136,7 +139,7 @@ async def chat_endpoint(
         assistant_message = Message(
             role="assistant",
             content=response_text,
-            timestamp=datetime.now(datetime.UTC),
+            timestamp=datetime.now(timezone.utc),
             is_reasoning=False,
         )
 
@@ -168,3 +171,12 @@ async def get_history(
     return await redis_store.get_session_history(
         user_id, session_id, include_reasoning=include_reasoning
     )
+
+
+@router.get("/sessions/{user_id}", response_model=List[str])
+async def get_sessions(
+    user_id: str,
+    redis_store: RedisStore = Depends(get_redis_store),
+):
+    logger.info(f"Fetching sessions for user={user_id}")
+    return await redis_store.get_user_sessions(user_id)

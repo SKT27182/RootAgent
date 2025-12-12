@@ -2,9 +2,13 @@ import os
 from dotenv import load_dotenv
 from backend.app.utils.logger import create_logger
 
+from pathlib import Path
+
 # Load environment variables from .env file
+# backend/app/core/config.py -> backend/.env
+# BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv()
-DEFAULT_MODEL_NAME = "gemini/gemini-2.5-flash"
+DEFAULT_MODEL_NAME = "gemini/gemini-1.5-flash"
 
 logger = create_logger(__name__, level=os.environ.get("LOG_LEVEL", "debug"))
 

@@ -111,3 +111,14 @@ class RedisStore:
         imports = await self.redis_client.smembers(key)
         logger.debug(f"Retrieved {len(imports)} imports from {key}")
         return imports
+
+    async def add_user_session(self, user_id: str, session_id: str):
+        key = f"user:{user_id}:sessions"
+        await self.redis_client.sadd(key, session_id)
+        logger.debug(f"Added session {session_id} to user {user_id}")
+
+    async def get_user_sessions(self, user_id: str) -> List[str]:
+        key = f"user:{user_id}:sessions"
+        sessions = await self.redis_client.smembers(key)
+        logger.debug(f"Retrieved {len(sessions)} sessions for user {user_id}")
+        return list(sessions)

@@ -23,6 +23,7 @@ class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     images: Optional[List[str]] = []
+    csv_data: Optional[str] = None
     include_reasoning: bool = False
 
 
