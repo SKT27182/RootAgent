@@ -227,8 +227,9 @@ function appendMessage(role, content, isReasoning) {
         bubble.innerHTML = `<div class="reasoning-header">Reasoning</div>${escapeHtml(content)}`;
     } else {
         bubble.className = 'message-bubble';
+        const parsedContext = parseContent(content);
         // Handle basic markdown? For minimal, just text with newlines
-        bubble.innerHTML = role === 'user' ? escapeHtml(content) : formatBotResponse(content);
+        bubble.innerHTML = role === 'user' ? escapeHtml(parsedContext) : formatBotResponse(parsedContext);
     }
     
     msgDiv.appendChild(bubble);
@@ -324,4 +325,20 @@ function readTextFile(file) {
         reader.onload = () => resolve(reader.result);
         reader.onerror = error => reject(error);
     });
+}
+
+function parseContent(content) {
+    try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+            return parsed.map(item => {
+                if (item.type === 'text') return item.text;
+                if (item.type === 'image_url') return '[Image]';
+                return JSON.stringify(item);
+            }).join('');
+        }
+        return content;
+    } catch (e) {
+        return content;
+    }
 }

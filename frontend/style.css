@@ -119,6 +119,8 @@ aside {
     flex-direction: column;
     position: relative;
     background-color: var(--bg-color);
+    height: 100%;
+    overflow: hidden;
 }
 
 .chat-container {

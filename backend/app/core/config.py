@@ -5,8 +5,6 @@ from backend.app.utils.logger import create_logger
 from pathlib import Path
 
 # Load environment variables from .env file
-# backend/app/core/config.py -> backend/.env
-# BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv()
 DEFAULT_MODEL_NAME = "gemini/gemini-1.5-flash"
 
