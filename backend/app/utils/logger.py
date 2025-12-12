@@ -8,6 +8,7 @@ from typing import Optional, List, Literal, Callable, Dict
 
 import time
 import json
+
 ################################################
 
 LOG_PATH = "/home/skt27182/logs"
@@ -40,6 +41,7 @@ class ColumnNotFound(Exception):
 
 
 ############################################# Logger #######################################
+
 
 def create_suppression_filter(suppressed_loggers):
     def filter_func(record):
@@ -91,12 +93,9 @@ class CustomFormatter(logging.Formatter):
             if formatted_record.funcName == "<module>"
             else f"{formatted_record.name}.{formatted_record.funcName}"
         )
-        
 
         # Create the log message without color first
-        custom_format = (
-            "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s"
-        )
+        custom_format = "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(funcName)s - %(lineno)d - %(message)s"
         formatter = logging.Formatter(custom_format, datefmt="%Y-%m-%d %H:%M:%S")
         log_message = formatter.format(formatted_record)
 

@@ -1,4 +1,3 @@
-
 # Adapted from smolagents CodeAgent prompt
 SYSTEM_PROMPT_TEMPLATE = """You are an expert assistant who can solve any task using code blobs. You will be given a task to solve as best you can.
 To do so, you have been given access to a list of tools: these tools are basically Python functions which you can call with code.
@@ -183,5 +182,3 @@ Here are the rules you should always follow to solve your task:
 
 Now Begin!
 """
-
-

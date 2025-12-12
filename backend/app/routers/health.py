@@ -5,6 +5,7 @@ from backend.app.core.config import Config
 router = APIRouter()
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
+
 @router.get("/health")
 async def health_check():
     logger.debug("Health check requested.")

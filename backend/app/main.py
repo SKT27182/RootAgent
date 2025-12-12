@@ -8,13 +8,16 @@ logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 app = FastAPI(title="RootAgent API")
 
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("Application starting up...")
 
+
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutting down...")
+
 
 # Configure CORS
 app.add_middleware(
@@ -32,5 +35,6 @@ app.include_router(document.router, tags=["Document"])
 
 if __name__ == "__main__":
     import uvicorn
+
     logger.info("Starting Uvicorn server...")
     uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
