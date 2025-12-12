@@ -8,7 +8,7 @@ from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 from backend.app.utils.utils import format_user_message
 import uuid
-import datetime
+from datetime import datetime
 import json
 from functools import lru_cache
 
@@ -68,7 +68,7 @@ async def chat_endpoint(
     user_message = Message(
         role="user",
         content=json.dumps(formatted_content),
-        timestamp=datetime.datetime.utcnow(),
+        timestamp=datetime.now(datetime.UTC),
     )
 
     # Save User Message to Redis
@@ -127,7 +127,7 @@ async def chat_endpoint(
             reasoning_message = Message(
                 role=step_msg.get("role", "assistant"),
                 content=content_str,
-                timestamp=datetime.datetime.utcnow(),
+                timestamp=datetime.now(datetime.UTC),
                 is_reasoning=True,
             )
             await redis_store.save_message(user_id, session_id, reasoning_message)
@@ -136,7 +136,7 @@ async def chat_endpoint(
         assistant_message = Message(
             role="assistant",
             content=response_text,
-            timestamp=datetime.datetime.utcnow(),
+            timestamp=datetime.now(datetime.UTC),
             is_reasoning=False,
         )
 
