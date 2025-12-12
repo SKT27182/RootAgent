@@ -70,6 +70,35 @@ class LLMClient:
 
             return content
 
+            return content
+
         except Exception as e:
             logger.error(f"LLM Generation failed: {str(e)}")
             raise RuntimeError(f"LLM Generation failed: {str(e)}")
+
+    async def astream(
+        self,
+        messages: list,
+        **kwargs,
+    ):
+        """
+        Streams response from the LLM asynchronously.
+        Yields chunks of the response content.
+        """
+        try:
+            logger.debug(f"Streaming response from model: {self.model}")
+            response = await acompletion(
+                model=self.model,
+                messages=messages,
+                api_key=self.api_key,
+                stream=True,
+                **kwargs,
+            )
+
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            logger.error(f"LLM Streaming failed: {str(e)}")
+            raise RuntimeError(f"LLM Streaming failed: {str(e)}")

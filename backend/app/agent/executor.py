@@ -147,4 +147,4 @@ class CodeExecutor:
                 return e.__context__
 
             logger.error(f"Execution Error: {str(e)}")
-            return f"Execution Error: {str(e)}"
+            raise e

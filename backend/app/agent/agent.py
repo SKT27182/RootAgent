@@ -248,15 +248,17 @@ class Agent:
                 if step_data.code:
                     logger.info(f"Executing Code Block:\n{step_data.code}")
                     observation = self.executor.execute(step_data.code)
+                    obs_msg = f"Observation: {observation}"
 
-                    logger.info(f"Observation: {observation}")
+                    logger.info(obs_msg)
 
                     # Check if it returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
                         return str(observation.answer), messages[initial_message_count:]
 
-                    # Truncate observation if too long? For now keep it simple.
-                    obs_msg = f"Observation: {observation}"
+                    # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
+                    obs_msg += "\n\n"
+                    obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
                     messages.append({"role": "user", "content": obs_msg})
                 else:
                     # Fallback: if no code was found, strictly prompt for it.
@@ -292,3 +294,101 @@ class Agent:
             "Agent finished without a final answer.",
             messages[initial_message_count:],
         )
+
+    async def run_stream(
+        self,
+        query: Optional[str] = None,
+        images: Optional[List[str]] = None,
+        csv_data: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        history: List[Message] = [],
+        **kwargs,
+    ):
+        """
+        Streamed ReAct loop.
+        Yields:
+            Dict: {"type": "token", "content": "..."}
+            Dict: {"type": "tool_output", "content": "..."}
+            Dict: {"type": "error", "content": "..."}
+            Dict: {"type": "final", "content": "..."}
+        """
+        logger.debug(f"Streaming Query: {query}")
+
+        messages = self._initialize_messages(query, history, images, csv_data)
+
+        # Track where the new steps start
+        initial_message_count = len(messages)
+
+        step_count = 0
+        while step_count < self.max_steps:
+            try:
+                # 1. Generate Step (Streamed)
+                llm_response = ""
+                async for token in self.llm.astream(messages, schema=None, **kwargs):
+                    llm_response += token
+                    yield {"type": "token", "content": token}
+
+                logger.debug(f"LLM Response (Streamed): {llm_response}")
+
+                # Append assistant message
+                messages.append({"role": "assistant", "content": llm_response})
+
+                # 2. Parse Step
+                step_data = self._parse_step(llm_response)
+                logger.info(f"--- Step {step_count} ---")
+                if step_data.thought:
+                    logger.info(f"Thought: {step_data.thought}")
+
+                # 3. Handle Code Execution
+                if step_data.code:
+                    logger.info(f"Executing Code Block:\n{step_data.code}")
+                    observation = self.executor.execute(step_data.code)
+
+                    obs_msg = f"Observation: {observation}"
+
+                    logger.info(obs_msg)
+
+                    # check if it returned a FinalAnswerExceptionbservation, FinalAnswerException):
+                    if isinstance(observation, FinalAnswerException):
+                        yield {"type": "final", "content": str(observation.answer)}
+                        return
+
+                    # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
+                    obs_msg += "\n\n"
+                    obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
+                    messages.append({"role": "user", "content": obs_msg})
+                else:
+                    # Fallback: if no code was found
+                    logger.warning("No code block found in LLM response.")
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
+                        }
+                    )
+
+                step_count += 1
+
+                # Yield separator for next loop
+                if step_count < self.max_steps:
+                    yield {"type": "step_separator", "content": ""}
+
+            except Exception as e:
+                logger.error(f"Error in step {step_count}: {traceback.format_exc()}")
+                error_msg = f"system error: {str(e)}"
+                yield {"type": "error", "content": error_msg}
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"\033[91m{error_msg}\033[0m",
+                    }
+                )
+                step_count += 1
+
+        # If loop finishes without final answer
+        yield {
+            "type": "final",
+            "content": "Agent reached maximum steps without a final answer.",
+        }
+        return

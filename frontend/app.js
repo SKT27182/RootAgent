@@ -1,6 +1,60 @@
 const API_BASE_URL = 'http://localhost:8000/chat';
 const USER_ID = 'user_' + Math.random().toString(36).substr(2, 9); // Simple random user ID for demo
 
+// Configure Marked.js with Highlight.js and Custom Renderer
+marked.setOptions({
+    highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+    },
+    breaks: true
+});
+
+const renderer = new marked.Renderer();
+renderer.code = function(tokenOrCode, language) {
+    let code = tokenOrCode;
+    let lang = language;
+
+    // Handle marked newer versions passing token object
+    if (typeof tokenOrCode === 'object' && tokenOrCode !== null) {
+        code = tokenOrCode.text || '';
+        lang = tokenOrCode.lang || '';
+    }
+
+    try {
+        // Safe check for hljs
+        if (typeof hljs === 'undefined') {
+            console.warn('Highlight.js not loaded');
+            return `<div class="code-wrapper"><pre><code>${code}</code></pre></div>`;
+        }
+
+        const validLang = !!(language && hljs.getLanguage(language));
+        const highlighted = validLang 
+            ? hljs.highlight(code, { language: language }).value 
+            : hljs.highlightAuto(code).value;
+            
+        return `<div class="code-wrapper">
+            <div class="code-header">
+                <span class="code-lang">${language || 'code'}</span>
+                <button class="copy-btn" onclick="copyToClipboard(this)">
+                    <span class="material-icons-round">content_copy</span> Copy
+                </button>
+            </div>
+            <pre><code class="hljs ${language || ''}">${highlighted}</code></pre>
+        </div>`;
+    } catch (e) {
+        console.error('Highlighting error:', e);
+         // Fallback to plain text
+        return `<div class="code-wrapper">
+             <div class="code-header"><span class="code-lang">text</span></div>
+             <pre><code>${code}</code></pre>
+        </div>`;
+    }
+};
+marked.use({ renderer });
+
 // State
 let currentSessionId = null;
 let isDark = true;
@@ -117,12 +171,24 @@ function updateActiveSessionInList(sessionId) {
 }
 
 // Messaging
+// Messaging
+function getWebSocketUrl() {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Assuming API is on localhost:8000 provided by API_BASE_URL which is http://localhost:8000/chat
+    // We want ws://localhost:8000/chat/ws
+    return API_BASE_URL.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws';
+}
+
 async function sendMessage() {
     const text = userInput.value.trim();
     if (!text && attachedFiles.length === 0) return;
 
     // UI Updates
+    // Clear input
     userInput.value = '';
+    // Reset file uploads
+    fileUpload.value = '';
+    filePreviews.innerHTML = '';
     sendBtn.disabled = true;
     userInput.style.height = 'auto'; // Reset height
     
@@ -136,7 +202,7 @@ async function sendMessage() {
 
     // Prepare Payload
     const payload = {
-        query: text || "Processed uploaded files.", // Fallback if only files
+        query: text || "Processed uploaded files.", 
         user_id: USER_ID,
         session_id: currentSessionId,
         include_reasoning: true,
@@ -144,17 +210,15 @@ async function sendMessage() {
         csv_data: null
     };
 
-    // Process Files
+    // Process Files (Async)
     for (const file of attachedFiles) {
         if (file.type.startsWith('image/')) {
             payload.images.push(await toBase64(file));
         } else if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
-            // Only support one CSV for now as per simple backend
              const content = await readTextFile(file);
-             if (payload.csv_data) payload.csv_data += '\n' + content; // Append if multiple?
+             if (payload.csv_data) payload.csv_data += '\n' + content; 
              else payload.csv_data = content;
         } else {
-             // Treat as text?
              const content = await readTextFile(file);
              payload.query += `\n\n[File: ${file.name}]\n${content}`;
         }
@@ -164,49 +228,132 @@ async function sendMessage() {
     attachedFiles = [];
     renderFilePreviews();
 
-    // Send to Backend
-    try {
-        const res = await fetch(`${API_BASE_URL}/`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+    // WebSocket Connection
+    const wsUrl = getWebSocketUrl();
+    const ws = new WebSocket(wsUrl);
+    
+    // Create Bot Message Container
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message bot`;
+    
+    // 1. Reasoning Block (for streaming tokens)
+    const reasoningBubble = document.createElement('div');
+    reasoningBubble.className = 'reasoning-block';
+    reasoningBubble.style.display = 'block'; // Ensure visible
+    reasoningBubble.innerHTML = '<div class="reasoning-header">Reasoning</div>'; // Header first
+    msgDiv.appendChild(reasoningBubble);
+    
+    // Reset current text node global for new message
+    window.currentReasoningStepProp = {
+        div: null,
+        content: ""
+    };
 
-        if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(errorData.detail || 'Error sending message');
+    // Create first step container
+    const createStepContainer = () => {
+        const div = document.createElement('div');
+        div.className = 'reasoning-step';
+        reasoningBubble.appendChild(div);
+        return div;
+    };
+    window.currentReasoningStepProp.div = createStepContainer();
+
+    
+    // 2. Final Answer Bubble (initially empty/hidden until final)
+    const finalBubble = document.createElement('div');
+    finalBubble.className = 'message-bubble';
+    finalBubble.style.display = 'none';
+    msgDiv.appendChild(finalBubble);
+    
+    chatContainer.appendChild(msgDiv);
+    
+    let currentReasoning = "";
+
+    ws.onopen = () => {
+        ws.send(JSON.stringify(payload));
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        switch (data.type) {
+            case 'token':
+                // Append token to current step content
+                window.currentReasoningStepProp.content += data.content;
+                // Render markdown for current step
+                // Render markdown for current step
+                if (window.currentReasoningStepProp.div) {
+                    try {
+                        window.currentReasoningStepProp.div.innerHTML = marked.parse(window.currentReasoningStepProp.content);
+                    } catch(e) {
+                        console.error('Marked parse error:', e);
+                        // Fallback to text
+                        window.currentReasoningStepProp.div.textContent = window.currentReasoningStepProp.content;
+                    }
+                }
+                scrollToBottom();
+                break;
+                
+            case 'tool_output':
+                // User requested to hide observation/tool outputs from reasoning
+                break;
+                
+            case 'step_separator':
+                // Visual separation for loops
+                const hr = document.createElement('hr');
+                hr.className = 'reasoning-separator';
+                reasoningBubble.appendChild(hr);
+                
+                // Start new step container
+                window.currentReasoningStepProp.div = createStepContainer();
+                window.currentReasoningStepProp.content = "";
+                scrollToBottom();
+                break;
+                
+            case 'final':
+                // Final answer received
+                const finalContent = data.content;
+                finalBubble.innerHTML = formatBotResponse(finalContent);
+                finalBubble.style.display = 'block';
+                scrollToBottom();
+                ws.close();
+                break;
+                
+            case 'error':
+                // Display error in the reasoning block, not as a separate message
+                window.currentReasoningStepProp.content += `\n\n**Error:** ${data.content}\n`;
+                if (window.currentReasoningStepProp.div) {
+                    try {
+                        window.currentReasoningStepProp.div.innerHTML = marked.parse(window.currentReasoningStepProp.content);
+                    } catch(e) {
+                        window.currentReasoningStepProp.div.textContent = window.currentReasoningStepProp.content;
+                    }
+                }
+                scrollToBottom();
+                break;
+            
+            case 'info':
+                if (data.session_id) {
+                    currentSessionId = data.session_id;
+                    loadSessions();
+                }
+                break;
         }
+    };
 
-        const data = await res.json();
-        
-        // If it was a new session, update ID and list
-        if (!currentSessionId) {
-            currentSessionId = data.session_id;
-            loadSessions(); // Refresh list to show new session
+    ws.onclose = () => {
+        sendBtn.disabled = false;
+        // If no final answer was shown (stream cut off?), maybe show what we have in reasoning?
+        if (finalBubble.style.display === 'none' && currentReasoning) {
+             // Just leave reasoning as is.
         }
+    };
 
-        // The backend returns the FINAL response.
-        // However, we asked for reasoning. But the backend *response* model only has `response`.
-        // The *history* has reasoning.
-        // Wait, the endpoints logic: `generated_steps` are saved to redis.
-        // But `chat_endpoint` returns `ChatResponse` which ONLY has `response` text.
-        // Effectively, we won't see reasoning in the immediate response unless we fetch history or update backend to return it.
-        // For this minimal implementation, I will just display the final response.
-        // If we want reasoning, we'd need to fetch history again or stream. 
-        // Let's just fetch the latest history to get reasoning, or just show final response.
-        
-        // Better UX: Show final response. If we really want reasoning "live", we need streaming or different response structure.
-        // I will just show the final response for now as per "minimal" requirement request, 
-        // BUT the prompt said "show reasoning in little reasoning block". 
-        // Since I can't get it from the immediate response, I will fetch history immediately after to get the latest messages.
-        
-        await loadChatHistory(currentSessionId); 
-
-    } catch (err) {
-        appendMessage('bot', `Error: ${err.message}`, false);
-    } finally {
-        scrollToBottom();
-    }
+    ws.onerror = (error) => {
+        console.error("WebSocket Error:", error);
+        appendMessage('bot', "Connection error.", false);
+        sendBtn.disabled = false;
+    };
 }
 
 function appendMessage(role, content, isReasoning) {
@@ -265,6 +412,22 @@ window.removeFile = (index) => {
     if (attachedFiles.length === 0 && !userInput.value.trim()) {
         sendBtn.disabled = true;
     }
+};
+
+// Global Copy Function for code blocks
+window.copyToClipboard = function(btn) {
+    const wrapper = btn.closest('.code-wrapper');
+    const code = wrapper.querySelector('code').innerText;
+    
+    navigator.clipboard.writeText(code).then(() => {
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="material-icons-round">check</span> Copied!';
+        setTimeout(() => {
+            btn.innerHTML = originalHtml;
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
 };
 
 function adjustTextareaHeight() {

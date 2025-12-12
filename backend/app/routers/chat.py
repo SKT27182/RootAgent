@@ -180,3 +180,134 @@ async def get_sessions(
 ):
     logger.info(f"Fetching sessions for user={user_id}")
     return await redis_store.get_user_sessions(user_id)
+
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    redis_store: RedisStore = Depends(get_redis_store),
+    agent_manager: AgentManager = Depends(get_agent_manager),
+):
+    await websocket.accept()
+    try:
+        data = await websocket.receive_text()
+        request_data = json.loads(data)
+
+        # Parse ChatRequest manually since it comes as dict
+        query = request_data.get("query")
+        user_id = request_data.get("user_id")
+        session_id = request_data.get("session_id")
+        include_reasoning = request_data.get("include_reasoning", True)
+        images = request_data.get("images")
+        csv_data = request_data.get("csv_data")
+
+        if not query or not user_id:
+            await websocket.send_json(
+                {"type": "error", "content": "Query and User ID are required"}
+            )
+            return
+
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            await websocket.send_json(
+                {
+                    "type": "info",
+                    "content": "New session created",
+                    "session_id": session_id,
+                }
+            )
+
+        # Save User Message
+        formatted_content = format_user_message(query, images, csv_data)
+        user_message = Message(
+            role="user",
+            content=json.dumps(formatted_content),
+            timestamp=datetime.now(timezone.utc),
+        )
+        await redis_store.save_message(user_id, session_id, user_message)
+        await redis_store.add_user_session(user_id, session_id)
+
+        # Retrieve Context
+        history = await redis_store.get_session_history(
+            user_id, session_id, include_reasoning=include_reasoning
+        )
+        previous_functions = await redis_store.get_functions(user_id, session_id)
+        previous_imports = await redis_store.get_imports(user_id, session_id)
+
+        agent = agent_manager.get_agent(
+            session_id,
+            previous_functions=previous_functions,
+            previous_imports=previous_imports,
+        )
+
+        # Stream Execution
+        final_answer = ""
+        generated_steps = (
+            []
+        )  # We need to reconstruct steps if we want to save them cleanly?
+        # Actually run_stream yields tokens and tool outputs.
+        # We need to buffer them to save to Redis afterwards.
+
+        current_step_content = ""
+        current_step_role = "assistant"  # Start assuming thought/assistant
+
+        async for event in agent.run_stream(
+            query=None,
+            images=None,
+            user_id=user_id,
+            session_id=session_id,
+            history=history,
+        ):
+            await websocket.send_json(event)
+
+            # Accumulate for persistence logic (This is a simplified version,
+            # ideally the Agent class should handle history internal state updates on stream too,
+            # but currently persistence happens OUTSIDE the agent in the router)
+
+            # Complexity: Creating proper 'Message' objects from stream is tricky
+            # without duplicating logic from Agent.run.
+            # Ideally, `run_stream` should return the final history update or we trust the Agent to return it.
+            # But `run_stream` yields events.
+
+            # For this iteration, we will rely on the `final` event to signal completion.
+            # And WE WON'T PERSIST intermediate steps in this simple WS handler yet
+            # UNLESS we reconstruct them.
+
+            # TODO: Improve persistence for streaming.
+            # For now, let's just save the FINAL answer if available.
+
+            if event["type"] == "final":
+                final_answer = event["content"]
+
+        # Save Assistant Message (Final)
+        if final_answer:
+            assistant_message = Message(
+                role="assistant",
+                content=final_answer,
+                timestamp=datetime.now(timezone.utc),
+                is_reasoning=False,
+            )
+            await redis_store.save_message(user_id, session_id, assistant_message)
+
+        # Re-save functions
+        try:
+            current_imports, current_functions = agent.get_all_defined_functions()
+            await redis_store.save_functions(user_id, session_id, current_functions)
+            await redis_store.save_imports(user_id, session_id, current_imports)
+        except Exception:
+            pass
+
+        await websocket.close()
+
+    except WebSocketDisconnect:
+        logger.info("Client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket Error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "content": str(e)})
+            await websocket.close()
+        except:
+            pass

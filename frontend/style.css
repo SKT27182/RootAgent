@@ -325,3 +325,69 @@ textarea:focus {
 ::-webkit-scrollbar-thumb:hover {
     background-color: #555;
 }
+
+.reasoning-separator {
+    border: 0;
+    height: 1px;
+    background: #444;
+    margin: 1rem 0;
+    width: 100%;
+}
+
+/* Code Block Styling */
+.code-wrapper {
+    background-color: #282c34;
+    border-radius: 8px;
+    margin: 1rem 0;
+    overflow: hidden;
+    font-family: monospace;
+}
+
+.code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    background-color: #21252b;
+    border-bottom: 1px solid #3e4451;
+    color: #abb2bf;
+    font-size: 0.85rem;
+}
+
+.code-lang {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.copy-btn {
+    background: transparent;
+    border: none;
+    color: #abb2bf;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    transition: opacity 0.2s;
+}
+
+.copy-btn:hover {
+    color: #fff;
+    opacity: 0.8;
+}
+
+.copy-btn .material-icons-round {
+    font-size: 1rem;
+}
+
+.code-wrapper pre {
+    margin: 0;
+    padding: 1rem;
+    overflow-x: auto;
+}
+
+.code-wrapper code {
+    font-family: "Fira Code", monospace;
+    font-size: 0.9rem;
+}
+
