@@ -3,18 +3,19 @@
 # System Dependencies Logic
 # This file documents the required system setup for future Docker deployment.
 
-echo "Setting up environment..."
+echo "Setting up local development environment..."
 
-# 1. Update Package List
-# sudo apt-get update
+# Note: Redis and Docker are expected to be installed if running locally without containers.
+# For full application deployment, use docker-compose.
 
-# 2. Install Redis (Key-Value Store for Chat Persistence)
-# sudo apt-get install -y redis-server
+# Install Python Dependencies for local development
+if [ -d ".venv" ]; then
+    echo "Activating virtual environment..."
+    source .venv/bin/activate
+fi
 
-# 3. Install Docker (Containerization for Deployment)
-# sudo apt-get install -y docker.io
-
-# 4. Install Python Dependencies
+echo "Installing backend dependencies..."
 pip install -r backend/requirements.txt
 
-echo "Setup complete. specific deployment instructions will be handled via Dockerfile later."
+echo "Setup for local development complete."
+echo "To run with Docker: docker-compose up --build"
