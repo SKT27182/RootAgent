@@ -2,11 +2,11 @@ from fastapi import APIRouter, UploadFile, File
 from backend.app.utils.logger import create_logger
 from backend.app.core.config import Config
 
-router = APIRouter()
+router = APIRouter(prefix="/document", tags=["Document"])
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 
-@router.post("/upload_document")
+@router.post("/")
 async def upload_document(file: UploadFile = File(...)):
     logger.info(f"Received document upload: {file.filename} ({file.content_type})")
     # Placeholder for document processing logic

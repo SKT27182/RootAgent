@@ -31,6 +31,9 @@ class Config:
     REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
     REDIS_SSL = os.environ.get("REDIS_SSL", "false").lower() == "true"
 
+    SWAGGER_USERNAME = os.environ.get("SWAGGER_USERNAME")
+    SWAGGER_PASSWORD = os.environ.get("SWAGGER_PASSWORD")
+
     # Validation
     @classmethod
     def validate(cls):

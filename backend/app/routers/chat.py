@@ -12,7 +12,7 @@ import datetime
 import json
 from functools import lru_cache
 
-router = APIRouter()
+router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 
@@ -32,7 +32,7 @@ def get_agent_manager():
     return AgentManager()
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/", response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
     redis_store: RedisStore = Depends(get_redis_store),
@@ -137,7 +137,7 @@ async def chat_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/chat/history/{user_id}/{session_id}", response_model=List[Message])
+@router.get("/history/{user_id}/{session_id}", response_model=List[Message])
 async def get_history(
     user_id: str, session_id: str, redis_store: RedisStore = Depends(get_redis_store)
 ):
