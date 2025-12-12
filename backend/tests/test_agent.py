@@ -101,20 +101,24 @@ def test_executor_imports():
     )
 
 
-def test_agent_run_loop(agent):
+@pytest.mark.anyio
+async def test_agent_run_loop(agent):
     # Mock specific sequence for the run loop
     # Step 1: LLM returns code to calculate
     # Step 2: LLM returns final answer
 
-    # We mock _generate_step to return raw strings directly to avoid mocking LLM response object wrapper logic in _generate_step if any
-    # But better to mock LLM.generate returning string
+    # Make agenerate an AsyncMock to support await
+    # We target agenerate because Agent.run uses agenerate
+    from unittest.mock import AsyncMock
 
-    agent.llm.generate.side_effect = [
-        "Thought: calc.\n```python\nprint(5 * 5)\n```",  # Step 1
-        "Thought: done.\n```python\nfinal_answer('25')\n```",  # Step 2
-    ]
+    agent.llm.agenerate = AsyncMock(
+        side_effect=[
+            "Thought: calc.\n```python\nprint(5 * 5)\n```",  # Step 1
+            "Thought: done.\n```python\nfinal_answer('25')\n```",  # Step 2
+        ]
+    )
 
-    result = agent.run("calculate 5*5")
+    result = await agent.run("calculate 5*5")
 
-    assert result == "25"
-    assert agent.llm.generate.call_count == 2
+    assert result[0] == "25"
+    assert agent.llm.agenerate.call_count == 2

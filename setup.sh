@@ -15,6 +15,6 @@ echo "Setting up environment..."
 # sudo apt-get install -y docker.io
 
 # 4. Install Python Dependencies
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 echo "Setup complete. specific deployment instructions will be handled via Dockerfile later."
