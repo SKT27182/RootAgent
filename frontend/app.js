@@ -1,11 +1,40 @@
-const API_BASE_URL = 'http://localhost:8000/chat';
+// Use relative path since frontend and backend are served from same origin
+const API_BASE_URL = '/chat';
+
+// Debug helper - logs to localStorage to persist across refreshes
+function debugLog(message) {
+    const logs = JSON.parse(localStorage.getItem('debug_logs') || '[]');
+    logs.push(`[${new Date().toISOString()}] ${message}`);
+    // Keep only last 50 entries
+    if (logs.length > 50) logs.shift();
+    localStorage.setItem('debug_logs', JSON.stringify(logs));
+    console.log('[DEBUG]', message);
+}
+
+// Call this in console to see logs: showDebugLogs()
+window.showDebugLogs = function() {
+    const logs = JSON.parse(localStorage.getItem('debug_logs') || '[]');
+    console.log('=== Debug Logs ===');
+    logs.forEach(log => console.log(log));
+};
+
+window.clearDebugLogs = function() {
+    localStorage.removeItem('debug_logs');
+    console.log('Debug logs cleared');
+};
+
+debugLog('Script loaded');
+
+// Capture when page is about to refresh/navigate
+window.addEventListener('beforeunload', (e) => {
+    debugLog('BEFOREUNLOAD triggered - page is navigating away!');
+});
 
 // Get authenticated user ID from auth.js
 let USER_ID = getUserId();
-if (!USER_ID) {
-    // Redirect to login if not authenticated
-    window.location.href = 'login.html';
-}
+debugLog(`Initial USER_ID: ${USER_ID}`);
+
+// Note: Auth redirect handled in DOMContentLoaded to avoid race conditions
 
 // Configure Marked.js with Highlight.js and Custom Renderer
 marked.setOptions({
@@ -88,11 +117,15 @@ const logoutBtn = document.getElementById('logout-btn');
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
+    debugLog('DOMContentLoaded fired');
+    
     // Check authentication
     if (!isAuthenticated()) {
+        debugLog('Auth check failed in DOMContentLoaded - redirecting to login');
         window.location.href = 'login.html';
         return;
     }
+    debugLog('Auth check passed');
     
     // Update USER_ID from auth
     USER_ID = getUserId();
@@ -139,12 +172,15 @@ function setupEventListeners() {
 
 // Session Management
 async function loadSessions() {
+    debugLog('loadSessions called');
     try {
         const res = await fetch(`${API_BASE_URL}/sessions/${USER_ID}`);
         if (!res.ok) throw new Error('Failed to load sessions');
         const sessions = await res.json();
+        debugLog(`loadSessions got ${sessions.length} sessions`);
         renderHistoryList(sessions);
     } catch (err) {
+        debugLog(`loadSessions error: ${err.message}`);
         console.error(err);
     }
 }
@@ -165,11 +201,13 @@ function renderHistoryList(sessions) {
         actionsDiv.className = 'session-actions';
         
         const copyBtn = document.createElement('button');
+        copyBtn.type = 'button'; // Prevent form submission
         copyBtn.className = 'session-action-btn copy-btn';
         copyBtn.innerHTML = '<span class="material-icons-round">content_copy</span>';
         copyBtn.title = 'Copy session ID';
         copyBtn.onclick = (e) => {
             e.stopPropagation();
+            e.preventDefault();
             navigator.clipboard.writeText(sessionId);
             copyBtn.innerHTML = '<span class="material-icons-round">check</span>';
             setTimeout(() => {
@@ -178,11 +216,13 @@ function renderHistoryList(sessions) {
         };
         
         const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button'; // Prevent form submission
         deleteBtn.className = 'session-action-btn delete-btn';
         deleteBtn.innerHTML = '<span class="material-icons-round">delete</span>';
         deleteBtn.title = 'Delete session';
         deleteBtn.onclick = (e) => {
             e.stopPropagation();
+            e.preventDefault();
             deleteSession(sessionId);
         };
         
@@ -218,6 +258,7 @@ async function deleteSession(sessionId) {
 }
 
 async function startNewChat() {
+    debugLog('startNewChat called');
     currentSessionId = null;
     chatContainer.innerHTML = `
         <div class="welcome-message" id="welcome-message">
@@ -262,12 +303,12 @@ function updateActiveSessionInList(sessionId) {
 // Messaging
 function getWebSocketUrl() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Assuming API is on localhost:8000 provided by API_BASE_URL which is http://localhost:8000/chat
-    // We want ws://localhost:8000/chat/ws
-    return API_BASE_URL.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws';
+    // Construct WebSocket URL from current host
+    return `${proto}//${window.location.host}${API_BASE_URL}/ws`;
 }
 
 async function sendMessage() {
+    debugLog('sendMessage called');
     const text = userInput.value.trim();
     if (!text && attachedFiles.length === 0) return;
 
@@ -301,17 +342,26 @@ async function sendMessage() {
     };
 
     // Process Files (Async)
-    for (const file of attachedFiles) {
-        if (file.type.startsWith('image/')) {
-            payload.images.push(await toBase64(file));
-        } else if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
-             const content = await readTextFile(file);
-             if (payload.csv_data) payload.csv_data += '\n' + content; 
-             else payload.csv_data = content;
-        } else {
-             const content = await readTextFile(file);
-             payload.query += `\n\n[File: ${file.name}]\n${content}`;
+    try {
+        for (const file of attachedFiles) {
+            console.log(`Processing file: ${file.name}, type: ${file.type}`);
+            if (file.type.startsWith('image/')) {
+                payload.images.push(await toBase64(file));
+            } else if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
+                const content = await readTextFile(file);
+                console.log(`CSV content length: ${content.length}`);
+                if (payload.csv_data) payload.csv_data += '\n' + content; 
+                else payload.csv_data = content;
+            } else {
+                const content = await readTextFile(file);
+                payload.query += `\n\n[File: ${file.name}]\n${content}`;
+            }
         }
+    } catch (fileError) {
+        console.error('Error processing files:', fileError);
+        appendMessage('bot', `Error processing file(s): ${fileError.message}`, false);
+        sendBtn.disabled = false;
+        return;
     }
 
     // Clear files
@@ -475,8 +525,10 @@ function sendMessageStreaming(payload) {
                 break;
             
             case 'info':
+                debugLog(`WS info received: session_id=${data.session_id}`);
                 if (data.session_id) {
                     currentSessionId = data.session_id;
+                    debugLog('Calling loadSessions after info');
                     loadSessions();
                 }
                 break;
@@ -492,19 +544,19 @@ function sendMessageStreaming(payload) {
 
     ws.onerror = (error) => {
         console.error("WebSocket Error:", error);
-        appendMessage('bot', "Connection error.", false);
+        console.error("WebSocket readyState:", ws.readyState);
+        // Don't append a new message if we've already shown something
+        if (finalBubble.style.display === 'none' && !window.currentReasoningStepProp.content) {
+            appendMessage('bot', "Connection error. Please try again.", false);
+        }
         sendBtn.disabled = false;
     };
 }
 
 function appendMessage(role, content, isReasoning) {
-    // If reasoning, check if we already have it? 
-    // Since we reload history, we might duplicate if not careful.
-    // simpler to just clear and reload or unique check. 
-    // loadChatHistory clears all, so it's safe.
-    
-    // But for the user message "echo", we append it manually. 
-    // When we reload history, it will be there. 
+    // Debug: Log the raw content being processed
+    console.log('[appendMessage] role:', role, 'isReasoning:', isReasoning);
+    console.log('[appendMessage] raw content (first 200 chars):', content?.substring(0, 200));
     
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
@@ -512,11 +564,17 @@ function appendMessage(role, content, isReasoning) {
     const bubble = document.createElement('div');
     if (isReasoning) {
         bubble.className = 'reasoning-block';
-        bubble.innerHTML = `<div class="reasoning-header">Reasoning</div>${escapeHtml(content)}`;
+        // Render reasoning content as markdown for proper code block display
+        const reasoningContent = parseContent(content);
+        console.log('[appendMessage] parsed reasoning (first 200 chars):', reasoningContent?.substring(0, 200));
+        const renderedContent = formatBotResponse(reasoningContent);
+        console.log('[appendMessage] rendered HTML (first 200 chars):', renderedContent?.substring(0, 200));
+        bubble.innerHTML = `<div class="reasoning-header">Reasoning</div><div class="reasoning-step">${renderedContent}</div>`;
     } else {
         bubble.className = 'message-bubble';
         const parsedContext = parseContent(content);
-        // Handle basic markdown? For minimal, just text with newlines
+        console.log('[appendMessage] parsed content (first 200 chars):', parsedContext?.substring(0, 200));
+        // Render bot responses as markdown, escape user messages
         bubble.innerHTML = role === 'user' ? escapeHtml(parsedContext) : formatBotResponse(parsedContext);
     }
     
@@ -526,8 +584,10 @@ function appendMessage(role, content, isReasoning) {
 
 // Helpers
 function handleFileSelect(e) {
+    debugLog(`handleFileSelect called with ${e.target.files.length} files`);
     const files = Array.from(e.target.files);
     attachedFiles = [...attachedFiles, ...files];
+    debugLog(`Total attached files: ${attachedFiles.length}`);
     renderFilePreviews();
     sendBtn.disabled = false;
     fileUpload.value = ''; // Reset
@@ -604,8 +664,14 @@ function escapeHtml(text) {
 }
 
 function formatBotResponse(text) {
-    // Simple formatter
-    return escapeHtml(text);
+    // Render markdown using marked.js
+    try {
+        return marked.parse(text);
+    } catch (e) {
+        console.error('Markdown parsing error:', e);
+        // Fallback to escaped HTML if parsing fails
+        return escapeHtml(text);
+    }
 }
 
 // File Utils

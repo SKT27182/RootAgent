@@ -6,3 +6,4 @@ demo.py
 antigravity.json
 .env.*
 *.pyc
+data

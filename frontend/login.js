@@ -1,4 +1,5 @@
-const API_BASE_URL = 'http://localhost:8000';
+// Use relative path since frontend and backend are served from same origin
+const API_BASE_URL = '';
 
 let isRegisterMode = false;
 
