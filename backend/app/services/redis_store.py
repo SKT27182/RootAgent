@@ -63,9 +63,10 @@ class RedisStore:
         )
         messages_json = await self.redis_client.lrange(key, 0, -1)
         messages = [Message(**json.loads(msg)) for msg in messages_json]
-
+        logger.debug(f"Retrieved {len(messages)} messages from {key}")
         if not include_reasoning:
             messages = [msg for msg in messages if not msg.is_reasoning]
+            logger.debug(f"Messages after removing reasoning: {len(messages)}")
 
         return messages
 

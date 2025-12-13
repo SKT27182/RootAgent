@@ -269,7 +269,7 @@ class Agent:
 
                 step_count += 1
 
-            except Exception:
+            except Exception as e:
                 logger.error(f"Error in step {step_count}: {traceback.format_exc()}")
                 error_msg = f"system error: {str(e)}"
                 messages.append(
@@ -280,15 +280,8 @@ class Agent:
                 )
                 step_count += 1
 
-        # If we reach here without returning, max steps was reached
-        if step_count >= self.max_steps:
-            return (
-                "Agent reached maximum steps without a final answer.",
-                messages[initial_message_count:],
-            )
-
         return (
-            "Agent finished without a final answer.",
+            "Agent reached maximum steps without a final answer.",
             messages[initial_message_count:],
         )
 
@@ -344,6 +337,9 @@ class Agent:
                     if isinstance(observation, FinalAnswerException):
                         yield {"type": "final", "content": str(observation.answer)}
                         return
+
+                    # Yield observation as separate event for persistence
+                    yield {"type": "observation", "content": obs_msg}
 
                     # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
                     obs_msg += "\n\n"

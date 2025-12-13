@@ -76,6 +76,7 @@ const uploadBtn = document.getElementById('upload-btn');
 const filePreviews = document.getElementById('file-previews');
 const themeToggle = document.getElementById('theme-toggle');
 const themeIcon = document.getElementById('theme-icon');
+const reasoningToggle = document.getElementById('reasoning-toggle');
 
 // Stored Files
 let attachedFiles = [];
@@ -230,11 +231,12 @@ async function sendMessage() {
     scrollToBottom();
 
     // Prepare Payload
+    const includeReasoning = reasoningToggle ? reasoningToggle.checked : true;
     const payload = {
         query: text || "Processed uploaded files.", 
         user_id: USER_ID,
         session_id: currentSessionId,
-        include_reasoning: true,
+        include_reasoning: includeReasoning,
         images: [],
         csv_data: null
     };
@@ -257,6 +259,60 @@ async function sendMessage() {
     attachedFiles = [];
     renderFilePreviews();
 
+    // Branch based on reasoning toggle
+    if (includeReasoning) {
+        // Use WebSocket for streaming with reasoning
+        sendMessageStreaming(payload);
+    } else {
+        // Use HTTP for non-streaming without reasoning
+        sendMessageHttp(payload);
+    }
+}
+
+async function sendMessageHttp(payload) {
+    // Create Bot Message Container (simple, no reasoning)
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message bot';
+    
+    const finalBubble = document.createElement('div');
+    finalBubble.className = 'message-bubble';
+    finalBubble.innerHTML = '<span class="loading-dots">Thinking...</span>';
+    msgDiv.appendChild(finalBubble);
+    
+    chatContainer.appendChild(msgDiv);
+    scrollToBottom();
+
+    try {
+        const response = await fetch(API_BASE_URL + '/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        finalBubble.innerHTML = formatBotResponse(data.response);
+        
+        // Update session ID if new
+        if (data.session_id && !currentSessionId) {
+            currentSessionId = data.session_id;
+            loadSessions();
+        }
+    } catch (error) {
+        console.error('HTTP request error:', error);
+        finalBubble.innerHTML = `<span class="error-text">Error: ${error.message}</span>`;
+    } finally {
+        sendBtn.disabled = false;
+        scrollToBottom();
+    }
+}
+
+function sendMessageStreaming(payload) {
     // WebSocket Connection
     const wsUrl = getWebSocketUrl();
     const ws = new WebSocket(wsUrl);
@@ -268,8 +324,8 @@ async function sendMessage() {
     // 1. Reasoning Block (for streaming tokens)
     const reasoningBubble = document.createElement('div');
     reasoningBubble.className = 'reasoning-block';
-    reasoningBubble.style.display = 'block'; // Ensure visible
-    reasoningBubble.innerHTML = '<div class="reasoning-header">Reasoning</div>'; // Header first
+    reasoningBubble.style.display = 'block';
+    reasoningBubble.innerHTML = '<div class="reasoning-header">Reasoning</div>';
     msgDiv.appendChild(reasoningBubble);
     
     // Reset current text node global for new message
@@ -310,13 +366,11 @@ async function sendMessage() {
                 // Append token to current step content
                 window.currentReasoningStepProp.content += data.content;
                 // Render markdown for current step
-                // Render markdown for current step
                 if (window.currentReasoningStepProp.div) {
                     try {
                         window.currentReasoningStepProp.div.innerHTML = marked.parse(window.currentReasoningStepProp.content);
                     } catch(e) {
                         console.error('Marked parse error:', e);
-                        // Fallback to text
                         window.currentReasoningStepProp.div.textContent = window.currentReasoningStepProp.content;
                     }
                 }
@@ -349,7 +403,7 @@ async function sendMessage() {
                 break;
                 
             case 'error':
-                // Display error in the reasoning block, not as a separate message
+                // Display error in the reasoning block
                 window.currentReasoningStepProp.content += `\n\n**Error:** ${data.content}\n`;
                 if (window.currentReasoningStepProp.div) {
                     try {
@@ -372,7 +426,6 @@ async function sendMessage() {
 
     ws.onclose = () => {
         sendBtn.disabled = false;
-        // If no final answer was shown (stream cut off?), maybe show what we have in reasoning?
         if (finalBubble.style.display === 'none' && currentReasoning) {
              // Just leave reasoning as is.
         }

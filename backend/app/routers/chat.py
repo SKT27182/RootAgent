@@ -44,7 +44,9 @@ async def chat_endpoint(
     images = request.images
     csv_data = request.csv_data
 
-    logger.info(f"Chat request received from user={user_id}, session={session_id}")
+    logger.info(
+        f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning}"
+    )
     logger.debug(f"Query: {query}")
 
     if not query:
@@ -228,7 +230,10 @@ async def websocket_endpoint(
         images = request_data.get("images")
         csv_data = request_data.get("csv_data")
 
-        logger.info(f"Chat request received from user={user_id}, session={session_id}")
+        logger.info(
+            f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning}"
+        )
+
         logger.debug(f"Query: {query}")
 
         if not query or not user_id:
@@ -254,15 +259,15 @@ async def websocket_endpoint(
             content=json.dumps(formatted_content),
             timestamp=datetime.now(timezone.utc),
         )
-        await redis_store.save_message(user_id, session_id, user_message)
         await redis_store.add_user_session(user_id, session_id)
+        await redis_store.save_message(user_id, session_id, user_message)
 
         # Retrieve Context
         history = await redis_store.get_session_history(
             user_id, session_id, include_reasoning=include_reasoning
         )
         logger.debug(f"Retrieved history: {history}")
-        logger.info(f"Retrieved {len(history)} messages from session {session_id}")
+        logger.info(f"Retrieved {len(history)-1} messages from session {session_id}")
         previous_functions = await redis_store.get_functions(user_id, session_id)
         previous_imports = await redis_store.get_imports(user_id, session_id)
 
@@ -286,8 +291,8 @@ async def websocket_endpoint(
             # Accumulate tokens to reconstruct messages for persistence
             if event["type"] == "token":
                 current_step_content += event["content"]
-            elif event["type"] == "step_separator":
-                # A step ended - save the accumulated content as reasoning
+            elif event["type"] == "observation":
+                # An observation came - save the accumulated LLM reasoning first as assistant
                 if current_step_content.strip():
                     reasoning_message = Message(
                         role="assistant",
@@ -298,8 +303,62 @@ async def websocket_endpoint(
                     await redis_store.save_message(
                         user_id, session_id, reasoning_message
                     )
-                    logger.debug(f"Saved reasoning step for session {session_id}")
+                    logger.debug(
+                        f"Saved reasoning step: {current_step_content[:100]}..."
+                    )
+                    current_step_content = ""  # Reset
+
+                # Save observation as user message (code output)
+                observation_message = Message(
+                    role="user",
+                    content=event["content"],
+                    timestamp=datetime.now(timezone.utc),
+                    is_reasoning=True,
+                )
+                await redis_store.save_message(user_id, session_id, observation_message)
+                logger.debug(f"Saved observation: {event['content'][:100]}...")
+            elif event["type"] == "step_separator":
+                # A step ended - save any remaining accumulated content as reasoning
+                if current_step_content.strip():
+                    reasoning_message = Message(
+                        role="assistant",
+                        content=current_step_content,
+                        timestamp=datetime.now(timezone.utc),
+                        is_reasoning=True,
+                    )
+                    await redis_store.save_message(
+                        user_id, session_id, reasoning_message
+                    )
+                    logger.debug(
+                        f"Saved reasoning step at separator: {current_step_content[:100]}..."
+                    )
                 current_step_content = ""  # Reset for next step
+            elif event["type"] == "error":
+                # An error occurred - save accumulated reasoning first as assistant
+                if current_step_content.strip():
+                    reasoning_message = Message(
+                        role="assistant",
+                        content=current_step_content,
+                        timestamp=datetime.now(timezone.utc),
+                        is_reasoning=True,
+                    )
+                    await redis_store.save_message(
+                        user_id, session_id, reasoning_message
+                    )
+                    logger.debug(
+                        f"Saved reasoning before error: {current_step_content[:100]}..."
+                    )
+                    current_step_content = ""  # Reset
+
+                # Save error as user message (like observation)
+                error_message = Message(
+                    role="user",
+                    content=event["content"],
+                    timestamp=datetime.now(timezone.utc),
+                    is_reasoning=True,
+                )
+                await redis_store.save_message(user_id, session_id, error_message)
+                logger.debug(f"Saved error as observation: {event['content'][:100]}...")
             elif event["type"] == "final":
                 # Save any remaining accumulated content before final
                 if current_step_content.strip():
@@ -308,6 +367,9 @@ async def websocket_endpoint(
                         content=current_step_content,
                         timestamp=datetime.now(timezone.utc),
                         is_reasoning=True,
+                    )
+                    logger.debug(
+                        f"Saving Remaining Reasoning messages: {current_step_content[:100]}..."
                     )
                     await redis_store.save_message(
                         user_id, session_id, reasoning_message
@@ -321,6 +383,9 @@ async def websocket_endpoint(
                 content=final_answer,
                 timestamp=datetime.now(timezone.utc),
                 is_reasoning=False,
+            )
+            logger.debug(
+                f"Saving Assistant Message: {final_answer} for session {session_id}"
             )
             await redis_store.save_message(user_id, session_id, assistant_message)
 
