@@ -81,6 +81,7 @@ class CodeExecutor:
             "abs": abs,
             "enumerate": enumerate,
             "zip": zip,
+            "open": open,  # Allow file operations for CSV reading
             "final_answer": final_answer,
         }
 

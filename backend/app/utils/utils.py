@@ -1,5 +1,11 @@
+import os
 import uuid
 from typing import List, Dict, Optional
+
+# Data directory for uploaded files
+DATA_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data"
+)
 
 
 def format_user_message(
@@ -21,23 +27,20 @@ def format_user_message(
             user_content.append({"type": "image_url", "image_url": {"url": url}})
 
     if csv_data:
+        # Ensure data directory exists
+        os.makedirs(DATA_DIR, exist_ok=True)
+
         filename = f"data_{uuid.uuid4().hex[:8]}.csv"
-        # In a real scenario, we might want to save this file to disk here or let the agent do it.
-        # However, the previous logic in agent.py saved it.
-        # To separate concerns, we can return the instruction to write it,
-        # but the actual file writing might need to happen here if we want the agent to just "see" it.
-        # The previous logic in agent.py:
-        # with open(filename, "w") as f: f.write(csv_data)
-        # So we should probably do it here to ensure the file exists when the agent runs.
+        filepath = os.path.join(DATA_DIR, filename)
 
         try:
-            with open(filename, "w") as f:
+            with open(filepath, "w") as f:
                 f.write(csv_data)
 
             user_content.append(
                 {
                     "type": "text",
-                    "text": f"\n\nI have provided a CSV file named '{filename}' containing the data. You can write code to read and analyze it.",
+                    "text": f"\n\nI have provided a CSV file at '{filepath}' containing the data. You can write code to read and analyze it.",
                 }
             )
         except Exception as e:
