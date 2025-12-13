@@ -69,22 +69,21 @@ class Agent:
         if previous_imports:
             injected_code += "\n".join(previous_imports) + "\n\n"
 
-        (
-            logger.debug(f"Injected imports: {previous_imports}")
+        logger.debug(
+            f"Injected imports: {list(previous_imports)}"
             if previous_imports
-            else logger.debug("No previous imports")
+            else "No previous imports to inject"
         )
+
         # Inject functions
         for func_name, func_source in previous_functions.items():
             injected_code += func_source + "\n\n"
 
         self.executor.execute(injected_code)
-        (
-            logger.debug(
-                f"Injected Previously defined functions: {list(self.executor.defined_functions.keys())}"
-            )
+        logger.debug(
+            f"Injected functions: {list(previous_functions.keys())}"
             if previous_functions
-            else logger.debug("No previous function definitions")
+            else "No previous functions to inject"
         )
 
         self.executor.defined_functions.update(previous_functions)
@@ -210,8 +209,6 @@ class Agent:
         query: Optional[str] = None,
         images: Optional[List[str]] = None,
         csv_data: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
         history: List[Message] = [],
         **kwargs,
     ) -> Tuple[str, List[Dict[str, Any]]]:
@@ -274,16 +271,16 @@ class Agent:
 
             except Exception:
                 logger.error(f"Error in step {step_count}: {traceback.format_exc()}")
+                error_msg = f"system error: {str(e)}"
                 messages.append(
                     {
                         "role": "user",
-                        "content": f"system error: {traceback.format_exc()}",
+                        "content": error_msg,
                     }
                 )
                 step_count += 1
 
-        # If we reach here without returning, check if the last message was a thought that looked like an answer
-        last_thought = messages[-1].get("content", "")
+        # If we reach here without returning, max steps was reached
         if step_count >= self.max_steps:
             return (
                 "Agent reached maximum steps without a final answer.",
@@ -300,8 +297,6 @@ class Agent:
         query: Optional[str] = None,
         images: Optional[List[str]] = None,
         csv_data: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
         history: List[Message] = [],
         **kwargs,
     ):
@@ -316,9 +311,6 @@ class Agent:
         logger.debug(f"Streaming Query: {query}")
 
         messages = self._initialize_messages(query, history, images, csv_data)
-
-        # Track where the new steps start
-        initial_message_count = len(messages)
 
         step_count = 0
         while step_count < self.max_steps:
@@ -344,12 +336,11 @@ class Agent:
                 if step_data.code:
                     logger.info(f"Executing Code Block:\n{step_data.code}")
                     observation = self.executor.execute(step_data.code)
-
                     obs_msg = f"Observation: {observation}"
 
                     logger.info(obs_msg)
 
-                    # check if it returned a FinalAnswerExceptionbservation, FinalAnswerException):
+                    # Check if execution returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
                         yield {"type": "final", "content": str(observation.answer)}
                         return
@@ -378,10 +369,11 @@ class Agent:
                 logger.error(f"Error in step {step_count}: {traceback.format_exc()}")
                 error_msg = f"system error: {str(e)}"
                 yield {"type": "error", "content": error_msg}
+                yield {"type": "step_separator", "content": ""}
                 messages.append(
                     {
                         "role": "user",
-                        "content": f"\033[91m{error_msg}\033[0m",
+                        "content": error_msg,
                     }
                 )
                 step_count += 1

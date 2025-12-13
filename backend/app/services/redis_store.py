@@ -4,7 +4,6 @@ from typing import List, Optional, Dict, Set
 from backend.app.models.chat import Message, Session
 from backend.app.utils.logger import create_logger
 from backend.app.core.config import Config
-import os
 
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
@@ -76,6 +75,49 @@ class RedisStore:
         await self.redis_client.delete(key)
         await self.redis_client.delete(f"{key}:functions")
 
+    async def delete_session(self, user_id: str, session_id: str) -> bool:
+        """
+        Completely delete a session and remove it from user's session list.
+        Returns True if session existed and was deleted.
+        """
+        key = self._get_session_key(user_id, session_id)
+        logger.debug(f"Deleting session {key}")
+
+        # Delete session messages
+        deleted = await self.redis_client.delete(key)
+        # Delete associated functions and imports
+        await self.redis_client.delete(f"{key}:functions")
+        await self.redis_client.delete(f"{key}:imports")
+        # Remove from user's session list
+        await self.redis_client.srem(f"user:{user_id}:sessions", session_id)
+
+        return deleted > 0
+
+    async def delete_message(
+        self, user_id: str, session_id: str, message_id: str
+    ) -> bool:
+        """
+        Delete a specific message by message_id from a session.
+        Returns True if message was found and deleted.
+        """
+        key = self._get_session_key(user_id, session_id)
+        logger.debug(f"Deleting message {message_id} from {key}")
+
+        # Get all messages
+        messages_json = await self.redis_client.lrange(key, 0, -1)
+
+        # Find and remove the target message
+        for msg_json in messages_json:
+            msg_data = json.loads(msg_json)
+            if msg_data.get("message_id") == message_id:
+                # Remove from list (removes first occurrence)
+                await self.redis_client.lrem(key, 1, msg_json)
+                logger.debug(f"Deleted message {message_id} from session {session_id}")
+                return True
+
+        logger.debug(f"Message {message_id} not found in session {session_id}")
+        return False
+
     async def save_functions(
         self, user_id: str, session_id: str, functions: Dict[str, str]
     ):
@@ -122,3 +164,18 @@ class RedisStore:
         sessions = await self.redis_client.smembers(key)
         logger.debug(f"Retrieved {len(sessions)} sessions for user {user_id}")
         return list(sessions)
+
+    async def get_all_users(self) -> List[str]:
+        """
+        Get all users who have sessions stored.
+        Internal method - not exposed via API.
+        """
+        users = set()
+        # Scan for keys matching pattern user:*:sessions
+        async for key in self.redis_client.scan_iter(match="user:*:sessions"):
+            # Extract user_id from key format: user:{user_id}:sessions
+            parts = key.split(":")
+            if len(parts) == 3:
+                users.add(parts[1])
+        logger.debug(f"Found {len(users)} users")
+        return list(users)

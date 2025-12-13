@@ -70,8 +70,6 @@ class LLMClient:
 
             return content
 
-            return content
-
         except Exception as e:
             logger.error(f"LLM Generation failed: {str(e)}")
             raise RuntimeError(f"LLM Generation failed: {str(e)}")

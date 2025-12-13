@@ -1,9 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from typing import List, Optional, Any
 from backend.app.models.chat import Session, Message, ChatRequest, ChatResponse
-
-# from backend.app.agent.agent import Agent # Removed, used via AgentManager
 from backend.app.services.redis_store import RedisStore
+from backend.app.services.agent_manager import AgentManager
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 from backend.app.utils.utils import format_user_message
@@ -20,9 +19,6 @@ logger = create_logger(__name__, level=Config.LOG_LEVEL)
 @lru_cache()
 def get_redis_store():
     return RedisStore()
-
-
-from backend.app.services.agent_manager import AgentManager
 
 
 # Dependency for AgentManager
@@ -44,7 +40,9 @@ async def chat_endpoint(
     query = request.query
     user_id = request.user_id
     session_id = request.session_id
+    include_reasoning = request.include_reasoning
     images = request.images
+    csv_data = request.csv_data
 
     logger.info(f"Chat request received from user={user_id}, session={session_id}")
     logger.debug(f"Query: {query}")
@@ -63,7 +61,7 @@ async def chat_endpoint(
 
     # Create User Message
     # Format message content using helper
-    formatted_content = format_user_message(query, images, request.csv_data)
+    formatted_content = format_user_message(query, images, csv_data)
 
     user_message = Message(
         role="user",
@@ -83,14 +81,14 @@ async def chat_endpoint(
 
         # Get history to pass to agent
         history = await redis_store.get_session_history(
-            user_id, session_id, include_reasoning=request.include_reasoning
+            user_id, session_id, include_reasoning=include_reasoning
         )
         logger.debug(f"Retrieved history: {history}")
         logger.info(f"Retrieved {len(history)} messages from session {session_id}")
         # Get persistent functions
         previous_functions = await redis_store.get_functions(user_id, session_id)
         previous_imports = await redis_store.get_imports(user_id, session_id)
-        logger.info(
+        logger.debug(
             f"Retrieved {len(previous_functions)} functions and {len(previous_imports)} imports from session {session_id}"
         )
         logger.debug(f"Previous functions: {previous_functions}")
@@ -106,8 +104,6 @@ async def chat_endpoint(
         response_text, generated_steps = await agent.run(
             query=None,  # Query is already in history
             images=None,  # Images are already in history
-            user_id=user_id,
-            session_id=session_id,
             history=history,
         )
 
@@ -182,7 +178,35 @@ async def get_sessions(
     return await redis_store.get_user_sessions(user_id)
 
 
-from fastapi import WebSocket, WebSocketDisconnect
+@router.delete("/sessions/{user_id}/{session_id}")
+async def delete_session(
+    user_id: str,
+    session_id: str,
+    redis_store: RedisStore = Depends(get_redis_store),
+):
+    """Delete a session and all its messages, functions, and imports."""
+    logger.info(f"Deleting session={session_id} for user={user_id}")
+    deleted = await redis_store.delete_session(user_id, session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"message": f"Session {session_id} deleted successfully"}
+
+
+@router.delete("/message/{user_id}/{session_id}/{message_id}")
+async def delete_message(
+    user_id: str,
+    session_id: str,
+    message_id: str,
+    redis_store: RedisStore = Depends(get_redis_store),
+):
+    """Delete a specific message from a session."""
+    logger.info(
+        f"Deleting message={message_id} from session={session_id} for user={user_id}"
+    )
+    deleted = await redis_store.delete_message(user_id, session_id, message_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"message": f"Message {message_id} deleted successfully"}
 
 
 @router.websocket("/ws")
@@ -203,6 +227,9 @@ async def websocket_endpoint(
         include_reasoning = request_data.get("include_reasoning", True)
         images = request_data.get("images")
         csv_data = request_data.get("csv_data")
+
+        logger.info(f"Chat request received from user={user_id}, session={session_id}")
+        logger.debug(f"Query: {query}")
 
         if not query or not user_id:
             await websocket.send_json(
@@ -234,6 +261,8 @@ async def websocket_endpoint(
         history = await redis_store.get_session_history(
             user_id, session_id, include_reasoning=include_reasoning
         )
+        logger.debug(f"Retrieved history: {history}")
+        logger.info(f"Retrieved {len(history)} messages from session {session_id}")
         previous_functions = await redis_store.get_functions(user_id, session_id)
         previous_imports = await redis_store.get_imports(user_id, session_id)
 
@@ -245,41 +274,44 @@ async def websocket_endpoint(
 
         # Stream Execution
         final_answer = ""
-        generated_steps = (
-            []
-        )  # We need to reconstruct steps if we want to save them cleanly?
-        # Actually run_stream yields tokens and tool outputs.
-        # We need to buffer them to save to Redis afterwards.
-
         current_step_content = ""
-        current_step_role = "assistant"  # Start assuming thought/assistant
 
         async for event in agent.run_stream(
             query=None,
             images=None,
-            user_id=user_id,
-            session_id=session_id,
             history=history,
         ):
             await websocket.send_json(event)
 
-            # Accumulate for persistence logic (This is a simplified version,
-            # ideally the Agent class should handle history internal state updates on stream too,
-            # but currently persistence happens OUTSIDE the agent in the router)
-
-            # Complexity: Creating proper 'Message' objects from stream is tricky
-            # without duplicating logic from Agent.run.
-            # Ideally, `run_stream` should return the final history update or we trust the Agent to return it.
-            # But `run_stream` yields events.
-
-            # For this iteration, we will rely on the `final` event to signal completion.
-            # And WE WON'T PERSIST intermediate steps in this simple WS handler yet
-            # UNLESS we reconstruct them.
-
-            # TODO: Improve persistence for streaming.
-            # For now, let's just save the FINAL answer if available.
-
-            if event["type"] == "final":
+            # Accumulate tokens to reconstruct messages for persistence
+            if event["type"] == "token":
+                current_step_content += event["content"]
+            elif event["type"] == "step_separator":
+                # A step ended - save the accumulated content as reasoning
+                if current_step_content.strip():
+                    reasoning_message = Message(
+                        role="assistant",
+                        content=current_step_content,
+                        timestamp=datetime.now(timezone.utc),
+                        is_reasoning=True,
+                    )
+                    await redis_store.save_message(
+                        user_id, session_id, reasoning_message
+                    )
+                    logger.debug(f"Saved reasoning step for session {session_id}")
+                current_step_content = ""  # Reset for next step
+            elif event["type"] == "final":
+                # Save any remaining accumulated content before final
+                if current_step_content.strip():
+                    reasoning_message = Message(
+                        role="assistant",
+                        content=current_step_content,
+                        timestamp=datetime.now(timezone.utc),
+                        is_reasoning=True,
+                    )
+                    await redis_store.save_message(
+                        user_id, session_id, reasoning_message
+                    )
                 final_answer = event["content"]
 
         # Save Assistant Message (Final)
@@ -292,13 +324,18 @@ async def websocket_endpoint(
             )
             await redis_store.save_message(user_id, session_id, assistant_message)
 
-        # Re-save functions
+        # Save functions/imports to Redis
         try:
             current_imports, current_functions = agent.get_all_defined_functions()
             await redis_store.save_functions(user_id, session_id, current_functions)
             await redis_store.save_imports(user_id, session_id, current_imports)
-        except Exception:
-            pass
+            logger.debug(
+                f"Saved {len(current_functions)} functions and {len(current_imports)} imports for session {session_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to save functions/imports for session {session_id}: {e}"
+            )
 
         await websocket.close()
 

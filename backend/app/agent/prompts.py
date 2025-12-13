@@ -9,6 +9,15 @@ During each intermediate step, you can use 'print()' to save whatever important 
 These print outputs will then appear in the 'Observation:' field, which will be available as input for the next step.
 In the end you have to return a final answer using the `final_answer` tool.
 
+{%- if self_defined_functions and self_defined_functions.values() | list %}
+You also have access to functions that you defined in previous steps. No need to write the function code again, if needed just directly call these function.
+{{code_block_opening_tag}}
+{%- for name, code in self_defined_functions.items() %}
+{{ code }}
+{% endfor %}
+{{code_block_closing_tag}}
+{%- endif %}
+
 Here are a few examples using notional tools:
 ---
 Task: "Generate an image of the oldest person in this document."
@@ -136,14 +145,6 @@ Above examples were using notional tools that might not exist for you. On top of
 {% endfor %}
 {{code_block_closing_tag}}
 
-{%- if self_defined_functions and self_defined_functions.values() | list %}
-You also have access to functions that you defined in previous steps. You can use them directly:
-{{code_block_opening_tag}}
-{%- for name, code in self_defined_functions.items() %}
-{{ code }}
-{% endfor %}
-{{code_block_closing_tag}}
-{%- endif %}
 
 {%- if managed_agents and managed_agents.values() | list %}
 You can also give tasks to team members.
@@ -175,6 +176,8 @@ Here are the rules you should always follow to solve your task:
 9. You can use imports in your code, but only from the following list of modules: {{authorized_imports}}
 10. The state persists between code executions: so if in one step you've created variables or imported modules, these will all persist.
 11. Don't give up! You're in charge of solving the task, not providing directions to solve it.
+12. If a function is listed under "functions that you defined in previous steps",you MUST NOT redefine it, modify it, or create another function with the same name. Doing so is an error. You must directly call the existing function.
+
 
 {%- if custom_instructions %}
 {{custom_instructions}}
