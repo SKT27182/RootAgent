@@ -1,11 +1,10 @@
 import os
 import uuid
+import tempfile
 from typing import List, Dict, Optional
 
-# Data directory for uploaded files
-DATA_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data"
-)
+# Use system temp directory for uploaded CSV files (auto-cleaned by OS)
+DATA_DIR = tempfile.gettempdir()
 
 
 def format_user_message(
@@ -27,9 +26,6 @@ def format_user_message(
             user_content.append({"type": "image_url", "image_url": {"url": url}})
 
     if csv_data:
-        # Ensure data directory exists
-        os.makedirs(DATA_DIR, exist_ok=True)
-
         filename = f"data_{uuid.uuid4().hex[:8]}.csv"
         filepath = os.path.join(DATA_DIR, filename)
 

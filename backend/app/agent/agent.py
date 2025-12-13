@@ -1,4 +1,5 @@
 import json
+import os
 import traceback
 from typing import List, Optional, Callable, Dict, Set, Tuple, Any
 import inspect
@@ -158,14 +159,17 @@ class Agent:
                     )
 
             if csv_data:
+                import tempfile
+
                 filename = f"data_{uuid.uuid4().hex[:8]}.csv"
-                with open(filename, "w") as f:
+                filepath = os.path.join(tempfile.gettempdir(), filename)
+                with open(filepath, "w") as f:
                     f.write(csv_data)
 
                 user_content.append(
                     {
                         "type": "text",
-                        "text": f"\n\nI have provided a CSV file named '{filename}' containing the data. You can write code to read and analyze it.",
+                        "text": f"\n\nI have provided a CSV file at '{filepath}' containing the data. You can write code to read and analyze it.",
                     }
                 )
 
