@@ -33,6 +33,13 @@ class Config:
     REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
     REDIS_SSL = os.environ.get("REDIS_SSL", "false").lower() == "true"
 
+    # JWT Settings
+    JWT_SECRET_KEY = os.environ.get(
+        "JWT_SECRET_KEY", "your-super-secret-key-change-in-production"
+    )
+    JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+    JWT_EXPIRATION_HOURS = int(os.environ.get("JWT_EXPIRATION_HOURS", 24))
+
     SWAGGER_USERNAME = os.environ.get("SWAGGER_USERNAME")
     SWAGGER_PASSWORD = os.environ.get("SWAGGER_PASSWORD")
 

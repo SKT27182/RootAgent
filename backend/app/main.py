@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from backend.app.routers import health, chat, document
+from backend.app.routers import health, chat, document, auth
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 
@@ -73,6 +73,7 @@ app.add_middleware(
 app.include_router(health.router, tags=["Health"])
 app.include_router(chat.router, tags=["Chat"])
 app.include_router(document.router, tags=["Document"])
+app.include_router(auth.router, tags=["Authentication"])
 
 if __name__ == "__main__":
     import uvicorn

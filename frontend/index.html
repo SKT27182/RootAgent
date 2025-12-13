@@ -62,10 +62,20 @@
                 <h2>Settings</h2>
             </div>
             <div class="settings-content">
+                <div class="setting-item user-info">
+                    <span class="material-icons-round">account_circle</span>
+                    <span id="user-display">User</span>
+                </div>
                 <div class="setting-item">
                     <label>Theme</label>
                     <button id="theme-toggle" class="icon-btn" title="Toggle Theme">
                         <span class="material-icons-round" id="theme-icon">light_mode</span>
+                    </button>
+                </div>
+                <div class="setting-item logout-item">
+                    <button id="logout-btn" class="logout-btn" title="Logout">
+                        <span class="material-icons-round">logout</span>
+                        Logout
                     </button>
                 </div>
             </div>
@@ -74,6 +84,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="auth.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

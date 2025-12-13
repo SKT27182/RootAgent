@@ -1,5 +1,11 @@
 const API_BASE_URL = 'http://localhost:8000/chat';
-const USER_ID = 'user_' + Math.random().toString(36).substr(2, 9); // Simple random user ID for demo
+
+// Get authenticated user ID from auth.js
+let USER_ID = getUserId();
+if (!USER_ID) {
+    // Redirect to login if not authenticated
+    window.location.href = 'login.html';
+}
 
 // Configure Marked.js with Highlight.js and Custom Renderer
 marked.setOptions({
@@ -74,8 +80,26 @@ const themeIcon = document.getElementById('theme-icon');
 // Stored Files
 let attachedFiles = [];
 
+// DOM Elements for auth
+const userDisplay = document.getElementById('user-display');
+const logoutBtn = document.getElementById('logout-btn');
+
 // Init
 document.addEventListener('DOMContentLoaded', () => {
+    // Check authentication
+    if (!isAuthenticated()) {
+        window.location.href = 'login.html';
+        return;
+    }
+    
+    // Update USER_ID from auth
+    USER_ID = getUserId();
+    
+    // Display username
+    if (userDisplay && getUsername()) {
+        userDisplay.textContent = getUsername();
+    }
+    
     loadSessions();
     setupTheme();
     setupEventListeners();
@@ -85,6 +109,11 @@ function setupEventListeners() {
     newChatBtn.addEventListener('click', startNewChat);
     
     sendBtn.addEventListener('click', sendMessage);
+    
+    // Logout handler
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', logout);
+    }
     
     userInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
