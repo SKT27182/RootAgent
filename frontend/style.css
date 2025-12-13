@@ -89,6 +89,9 @@ aside {
 }
 
 .history-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: 0.75rem;
     border-radius: 6px;
     cursor: pointer;
@@ -96,6 +99,10 @@ aside {
     color: var(--text-color);
     opacity: 0.8;
     transition: background-color 0.2s;
+}
+
+.history-item .session-text {
+    flex: 1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -111,6 +118,50 @@ aside {
     font-weight: 500;
     opacity: 1;
     border-left: 2px solid var(--primary-color);
+}
+
+.session-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.history-item:hover .session-actions {
+    opacity: 1;
+}
+
+.session-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-color);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+}
+
+.session-action-btn .material-icons-round {
+    font-size: 16px;
+}
+
+.session-action-btn:hover {
+    opacity: 1;
+    background: var(--border-color);
+}
+
+.session-action-btn.delete-btn:hover {
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.1);
+}
+
+.session-action-btn.copy-btn:hover {
+    color: var(--primary-color);
+    background: rgba(88, 166, 255, 0.1);
 }
 
 /* Chat Area */

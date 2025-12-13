@@ -77,6 +77,7 @@ const filePreviews = document.getElementById('file-previews');
 const themeToggle = document.getElementById('theme-toggle');
 const themeIcon = document.getElementById('theme-icon');
 const reasoningToggle = document.getElementById('reasoning-toggle');
+const backendReasoningToggle = document.getElementById('backend-reasoning-toggle');
 
 // Stored Files
 let attachedFiles = [];
@@ -153,10 +154,67 @@ function renderHistoryList(sessions) {
     sessions.forEach(sessionId => {
         const div = document.createElement('div');
         div.className = `history-item ${sessionId === currentSessionId ? 'active' : ''}`;
-        div.textContent = sessionId; // In real app, maybe show summary or date
-        div.onclick = () => loadChatHistory(sessionId);
+        
+        const sessionText = document.createElement('span');
+        sessionText.className = 'session-text';
+        sessionText.textContent = sessionId.substring(0, 8) + '...'; // Show truncated ID
+        sessionText.title = sessionId; // Full ID on hover
+        sessionText.onclick = () => loadChatHistory(sessionId);
+        
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'session-actions';
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'session-action-btn copy-btn';
+        copyBtn.innerHTML = '<span class="material-icons-round">content_copy</span>';
+        copyBtn.title = 'Copy session ID';
+        copyBtn.onclick = (e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(sessionId);
+            copyBtn.innerHTML = '<span class="material-icons-round">check</span>';
+            setTimeout(() => {
+                copyBtn.innerHTML = '<span class="material-icons-round">content_copy</span>';
+            }, 1500);
+        };
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'session-action-btn delete-btn';
+        deleteBtn.innerHTML = '<span class="material-icons-round">delete</span>';
+        deleteBtn.title = 'Delete session';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteSession(sessionId);
+        };
+        
+        actionsDiv.appendChild(copyBtn);
+        actionsDiv.appendChild(deleteBtn);
+        div.appendChild(sessionText);
+        div.appendChild(actionsDiv);
         historyList.appendChild(div);
     });
+}
+
+async function deleteSession(sessionId) {
+    if (!confirm('Delete this session? This cannot be undone.')) return;
+    
+    try {
+        const res = await fetch(`${API_BASE_URL}/sessions/${USER_ID}/${sessionId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!res.ok) throw new Error('Failed to delete session');
+        
+        // If we deleted the current session, start a new chat
+        if (sessionId === currentSessionId) {
+            startNewChat();
+        }
+        
+        // Reload session list
+        loadSessions();
+    } catch (err) {
+        console.error('Delete error:', err);
+        alert('Failed to delete session');
+    }
 }
 
 async function startNewChat() {
@@ -231,12 +289,13 @@ async function sendMessage() {
     scrollToBottom();
 
     // Prepare Payload
-    const includeReasoning = reasoningToggle ? reasoningToggle.checked : true;
+    const showReasoning = reasoningToggle ? reasoningToggle.checked : true;
+    const backendReasoning = backendReasoningToggle ? backendReasoningToggle.checked : true;
     const payload = {
         query: text || "Processed uploaded files.", 
         user_id: USER_ID,
         session_id: currentSessionId,
-        include_reasoning: includeReasoning,
+        include_reasoning: backendReasoning,
         images: [],
         csv_data: null
     };
@@ -259,8 +318,8 @@ async function sendMessage() {
     attachedFiles = [];
     renderFilePreviews();
 
-    // Branch based on reasoning toggle
-    if (includeReasoning) {
+    // Branch based on show reasoning toggle (controls UI streaming vs HTTP)
+    if (showReasoning) {
         // Use WebSocket for streaming with reasoning
         sendMessageStreaming(payload);
     } else {
