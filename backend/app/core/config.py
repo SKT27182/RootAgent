@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
-DEFAULT_MODEL_NAME = "gemini/gemini-1.5-flash"
+DEFAULT_MODEL_NAME = "openrouter/amazon/nova-2-lite-v1:free"
 
 logger = create_logger(__name__, level=os.environ.get("LOG_LEVEL", "debug"))
 
