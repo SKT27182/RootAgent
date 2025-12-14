@@ -20,8 +20,6 @@ dependencies = [
     "python-jose[cryptography]==3.3.0",
     "python-multipart==0.0.20",
     "redis==7.1.0",
-    "scipy>=1.16.3",
-    "seaborn>=0.13.2",
     "smolagents==1.23.0",
     "uvicorn[standard]==0.38.0",
 ]
