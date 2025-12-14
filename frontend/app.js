@@ -1,5 +1,6 @@
-// Use relative path since frontend and backend are served from same origin
-const API_BASE_URL = '/chat';
+// Auto-detect local dev (port 3000) vs Docker (nginx on port 80)
+const isLocalDev = window.location.port === '3000';
+const API_BASE_URL = isLocalDev ? 'http://localhost:8000/chat' : '/chat';
 
 // Debug helper - logs to localStorage to persist across refreshes
 function debugLog(message) {
@@ -303,8 +304,12 @@ function updateActiveSessionInList(sessionId) {
 // Messaging
 function getWebSocketUrl() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Handle local dev vs Docker
+    if (isLocalDev) {
+        return `ws://localhost:8000/chat/ws`;
+    }
     // Construct WebSocket URL from current host
-    return `${proto}//${window.location.host}${API_BASE_URL}/ws`;
+    return `${proto}//${window.location.host}/chat/ws`;
 }
 
 async function sendMessage() {
@@ -664,15 +669,102 @@ function escapeHtml(text) {
 }
 
 function formatBotResponse(text) {
+    // Check if the text is a base64 image (PNG/JPEG)
+    if (isBase64Image(text)) {
+        return renderBase64Image(text);
+    }
+    
     // Render markdown using marked.js
     try {
         return marked.parse(text);
     } catch (e) {
         console.error('Markdown parsing error:', e);
-        // Fallback to escaped HTML if parsing fails
         return escapeHtml(text);
     }
 }
+
+function isBase64Image(text) {
+    if (typeof text !== 'string') return false;
+    
+    // Trim whitespace
+    const trimmed = text.trim();
+    
+    // Check if it's a data URL with image
+    if (trimmed.startsWith('data:image/')) {
+        return true;
+    }
+    
+    // Check if it looks like a raw base64 PNG (starts with PNG magic bytes in base64)
+    // PNG base64 starts with "iVBORw0KGgo"
+    if (trimmed.startsWith('iVBORw0KGgo')) {
+        return true;
+    }
+    
+    // Check for JPEG (starts with "/9j/")
+    if (trimmed.startsWith('/9j/')) {
+        return true;
+    }
+    
+    // Additional check: if it's a long alphanumeric string without spaces/newlines, might be base64
+    // Only if it's reasonably long (images are typically large)
+    if (trimmed.length > 100 && /^[A-Za-z0-9+/=]+$/.test(trimmed)) {
+        return true;
+    }
+    
+    return false;
+}
+
+function renderBase64Image(text) {
+    const trimmed = text.trim();
+    let dataUrl;
+    
+    if (trimmed.startsWith('data:image/')) {
+        // Already a data URL
+        dataUrl = trimmed;
+    } else if (trimmed.startsWith('iVBORw0KGgo')) {
+        // PNG
+        dataUrl = `data:image/png;base64,${trimmed}`;
+    } else if (trimmed.startsWith('/9j/')) {
+        // JPEG
+        dataUrl = `data:image/jpeg;base64,${trimmed}`;
+    } else {
+        // Default to PNG
+        dataUrl = `data:image/png;base64,${trimmed}`;
+    }
+    
+    return `
+        <div class="image-response">
+            <img src="${dataUrl}" alt="Generated Chart" class="generated-image" onclick="openImageFullscreen(this)">
+            <button class="download-btn" onclick="downloadImage('${dataUrl}', 'chart.png')">
+                <span class="material-icons-round">download</span> Download
+            </button>
+        </div>
+    `;
+}
+
+// Download image helper
+window.downloadImage = function(dataUrl, filename) {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    link.click();
+};
+
+// Fullscreen image viewer
+window.openImageFullscreen = function(img) {
+    const overlay = document.createElement('div');
+    overlay.className = 'image-overlay';
+    overlay.innerHTML = `
+        <img src="${img.src}" alt="Fullscreen Image">
+        <button class="close-overlay" onclick="this.parentElement.remove()">
+            <span class="material-icons-round">close</span>
+        </button>
+    `;
+    overlay.onclick = (e) => {
+        if (e.target === overlay) overlay.remove();
+    };
+    document.body.appendChild(overlay);
+};
 
 // File Utils
 function toBase64(file) {

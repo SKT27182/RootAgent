@@ -1,5 +1,6 @@
-// Use relative path since frontend and backend are served from same origin
-const API_BASE_URL = '';
+// Auto-detect local dev (port 3000) vs Docker (nginx on port 80)
+const isLocalDev = window.location.port === '3000';
+const API_BASE_URL = isLocalDev ? 'http://localhost:8000' : '';
 
 let isRegisterMode = false;
 
