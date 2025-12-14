@@ -10,6 +10,7 @@ dependencies = [
     "httpx==0.28.1",
     "jinja2==3.1.6",
     "litellm==1.80.9",
+    "matplotlib>=3.10.8",
     "numpy>=2.3.5",
     "pandas>=2.3.3",
     "passlib[bcrypt]==1.7.4",
@@ -19,6 +20,8 @@ dependencies = [
     "python-jose[cryptography]==3.3.0",
     "python-multipart==0.0.20",
     "redis==7.1.0",
+    "scipy>=1.16.3",
+    "seaborn>=0.13.2",
     "smolagents==1.23.0",
     "uvicorn[standard]==0.38.0",
 ]

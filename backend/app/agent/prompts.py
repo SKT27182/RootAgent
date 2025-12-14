@@ -177,6 +177,7 @@ Here are the rules you should always follow to solve your task:
 10. The state persists between code executions: so if in one step you've created variables or imported modules, these will all persist.
 11. Don't give up! You're in charge of solving the task, not providing directions to solve it.
 12. If a function is listed under "functions that you defined in previous steps",you MUST NOT redefine it, modify it, or create another function with the same name. Doing so is an error. You must directly call the existing function.
+13. If a graph, chart, or plot is requested at any point, you MUST generate it using Python and return the result as a Base64-encoded string. Do NOT display the graph directly. Encode the image (e.g., PNG) into Base64 and return that string using the `final_answer` tool.
 
 
 {%- if custom_instructions %}

@@ -19,6 +19,14 @@ def verify(credentials: HTTPBasicCredentials = Depends(security)):
     username = os.getenv("SWAGGER_USERNAME")
     password = os.getenv("SWAGGER_PASSWORD")
 
+    # If credentials not configured, deny access
+    if not username or not password:
+        raise HTTPException(
+            status_code=401,
+            detail="Swagger auth not configured",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
     correct_username = secrets.compare_digest(credentials.username, username)
     correct_password = secrets.compare_digest(credentials.password, password)
 

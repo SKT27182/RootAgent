@@ -1,5 +1,6 @@
 from typing import Dict, Set
 from backend.app.agent.agent import Agent
+from backend.app.agent.tools import AGENT_TOOLS
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 
@@ -28,7 +29,9 @@ class AgentManager:
         if session_id not in self._agents:
             logger.info(f"Creating new Agent for session: {session_id}")
             self._agents[session_id] = Agent(
-                previous_functions=previous_functions, previous_imports=previous_imports
+                additional_functions=AGENT_TOOLS,
+                previous_functions=previous_functions,
+                previous_imports=previous_imports,
             )
         else:
             logger.info(f"Reusing existing Agent for session: {session_id}")

@@ -1,4 +1,6 @@
-# Build stage with uv for fast dependency installation
+# =========================
+# Build stage
+# =========================
 FROM python:3.12-slim AS builder
 
 # Install uv
@@ -6,21 +8,27 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
+# Ensure uv creates .venv inside project
+ENV UV_PROJECT_ENVIRONMENT=.venv
+
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Create virtual env and install dependencies
+# Install dependencies into .venv
 RUN uv sync --frozen --no-dev --no-install-project
 
+
+# =========================
 # Runtime stage
+# =========================
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy virtual environment from builder
+# Copy virtual environment
 COPY --from=builder /app/.venv /app/.venv
 
-# Set PATH to use venv
+# Activate venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application code
