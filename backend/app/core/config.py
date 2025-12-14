@@ -32,6 +32,7 @@ class Config:
     REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
     REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
     REDIS_SSL = os.environ.get("REDIS_SSL", "false").lower() == "true"
+    SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", 172800))  # 2 days
 
     # JWT Settings
     JWT_SECRET_KEY = os.environ.get(

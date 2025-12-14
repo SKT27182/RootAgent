@@ -156,9 +156,26 @@ class RedisStore:
         return imports
 
     async def add_user_session(self, user_id: str, session_id: str):
-        key = f"user:{user_id}:sessions"
-        await self.redis_client.sadd(key, session_id)
-        logger.debug(f"Added session {session_id} to user {user_id}")
+        """Register a new session and set TTL on all related keys."""
+        user_sessions_key = f"user:{user_id}:sessions"
+        session_key = self._get_session_key(user_id, session_id)
+
+        # Check if this is a new session (not already tracked)
+        is_new = not await self.redis_client.sismember(user_sessions_key, session_id)
+
+        # Add to user's session list
+        await self.redis_client.sadd(user_sessions_key, session_id)
+
+        # Set TTL on all session keys only when session is first created
+        if is_new:
+            ttl = Config.SESSION_TTL_SECONDS
+            # Set TTL on session messages, functions, and imports keys
+            await self.redis_client.expire(session_key, ttl)
+            await self.redis_client.expire(f"{session_key}:functions", ttl)
+            await self.redis_client.expire(f"{session_key}:imports", ttl)
+            logger.info(f"Created new session {session_id} with {ttl}s TTL")
+        else:
+            logger.debug(f"Session {session_id} already exists for user {user_id}")
 
     async def get_user_sessions(self, user_id: str) -> List[str]:
         key = f"user:{user_id}:sessions"
