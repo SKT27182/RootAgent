@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 from typing import List, Optional, Any
 from backend.app.models.chat import Session, Message, ChatRequest, ChatResponse
 from backend.app.services.redis_store import RedisStore
-from backend.app.services.agent_manager import AgentManager
+from backend.app.agent.agent import Agent
+from backend.app.agent.tools import AGENT_TOOLS
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
 from backend.app.utils.utils import format_user_message
@@ -21,18 +22,10 @@ def get_redis_store():
     return RedisStore()
 
 
-# Dependency for AgentManager
-# We can just instantiate it since it's a singleton, or use a dependency.
-# Using a simple function to get the singleton.
-def get_agent_manager():
-    return AgentManager()
-
-
 @router.post("/", response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
     redis_store: RedisStore = Depends(get_redis_store),
-    agent_manager: AgentManager = Depends(get_agent_manager),
 ):
     """
     Endpoint for chat interaction.
@@ -45,9 +38,8 @@ async def chat_endpoint(
     csv_data = request.csv_data
 
     logger.info(
-        f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning}"
+        f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning} for query={query}"
     )
-    logger.debug(f"Query: {query}")
 
     if not query:
         logger.error("Query missing in request.")
@@ -96,9 +88,9 @@ async def chat_endpoint(
         logger.debug(f"Previous functions: {previous_functions}")
         logger.debug(f"Previous imports: {previous_imports}")
 
-        # Get or create persistent agent
-        agent = agent_manager.get_agent(
-            session_id,
+        # Create ephemeral agent (state restored from Redis)
+        agent = Agent(
+            additional_functions=AGENT_TOOLS,
             previous_functions=previous_functions,
             previous_imports=previous_imports,
         )
@@ -167,7 +159,7 @@ async def get_history(
         f"Fetching history for user={user_id}, session={session_id}, include_reasoning={include_reasoning}"
     )
     return await redis_store.get_session_history(
-        user_id, session_id, include_reasoning=include_reasoning
+        user_id, session_id, include_reasoning=include_reasoning, last_n=-1
     )
 
 
@@ -215,7 +207,6 @@ async def delete_message(
 async def websocket_endpoint(
     websocket: WebSocket,
     redis_store: RedisStore = Depends(get_redis_store),
-    agent_manager: AgentManager = Depends(get_agent_manager),
 ):
     await websocket.accept()
     try:
@@ -231,10 +222,8 @@ async def websocket_endpoint(
         csv_data = request_data.get("csv_data")
 
         logger.info(
-            f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning}"
+            f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning} for query={query}"
         )
-
-        logger.debug(f"Query: {query}")
 
         if not query or not user_id:
             await websocket.send_json(
@@ -271,8 +260,9 @@ async def websocket_endpoint(
         previous_functions = await redis_store.get_functions(user_id, session_id)
         previous_imports = await redis_store.get_imports(user_id, session_id)
 
-        agent = agent_manager.get_agent(
-            session_id,
+        # Create ephemeral agent (state restored from Redis)
+        agent = Agent(
+            additional_functions=AGENT_TOOLS,
             previous_functions=previous_functions,
             previous_imports=previous_imports,
         )

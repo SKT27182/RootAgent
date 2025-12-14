@@ -178,6 +178,7 @@ Here are the rules you should always follow to solve your task:
 11. Don't give up! You're in charge of solving the task, not providing directions to solve it.
 12. If a function is listed under "functions that you defined in previous steps",you MUST NOT redefine it, modify it, or create another function with the same name. Doing so is an error. You must directly call the existing function.
 13. If a graph, chart, or plot is requested at any point, you MUST generate it using Python and return the result as a Base64-encoded string. Do NOT display the graph directly. Encode the image (e.g., PNG) into Base64 and return that string using the `final_answer` tool.
+14. No need to un-necessarily use tools, if there is no need of it then just simply answer the question.
 
 
 {%- if custom_instructions %}

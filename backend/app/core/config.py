@@ -24,6 +24,9 @@ class Config:
     # Model Defaults
     DEFAULT_MODEL = os.environ.get("LLM_MODEL", DEFAULT_MODEL_NAME)
 
+    # Tavily API Key
+    TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+
     # Logging
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "debug")
 

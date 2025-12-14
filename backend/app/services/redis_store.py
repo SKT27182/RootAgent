@@ -55,20 +55,72 @@ class RedisStore:
         await self.redis_client.rpush(key, message.model_dump_json())
 
     async def get_session_history(
-        self, user_id: str, session_id: str, include_reasoning: bool = False
+        self,
+        user_id: str,
+        session_id: str,
+        include_reasoning: bool = False,
+        last_n: int = 10,
     ) -> List[Message]:
+
         key = self._get_session_key(user_id, session_id)
         logger.debug(
             f"Retrieving history for {key}, include_reasoning={include_reasoning}"
         )
+
         messages_json = await self.redis_client.lrange(key, 0, -1)
         messages = [Message(**json.loads(msg)) for msg in messages_json]
-        logger.debug(f"Retrieved {len(messages)} messages from {key}")
-        if not include_reasoning:
-            messages = [msg for msg in messages if not msg.is_reasoning]
-            logger.debug(f"Messages after removing reasoning: {len(messages)}")
 
-        return messages
+        logger.debug(f"Retrieved {len(messages)} messages from {key}")
+
+        # --------------------------------------------------
+        # Case 1: full history
+        # --------------------------------------------------
+        if last_n == -1:
+            if include_reasoning:
+                return messages
+            return [m for m in messages if not m.is_reasoning]
+
+        # Current question is also saved
+        last_n += 1
+
+        # --------------------------------------------------
+        # Case 2: find window by counting REAL user messages
+        # --------------------------------------------------
+        user_count = 0
+        start_idx = 0
+
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role == "user" and not messages[i].is_reasoning:
+                user_count += 1
+                if user_count == last_n:
+                    start_idx = i
+                    break
+
+        # --------------------------------------------------
+        # Compress forward to first REAL user message
+        # --------------------------------------------------
+        while start_idx < len(messages) and not (
+            messages[start_idx].role == "user" and not messages[start_idx].is_reasoning
+        ):
+            start_idx += 1
+
+        if start_idx >= len(messages):
+            return []
+
+        window = messages[start_idx:]
+
+        # --------------------------------------------------
+        # Apply include_reasoning filter
+        # --------------------------------------------------
+        if not include_reasoning:
+            window = [m for m in window if not m.is_reasoning]
+
+        logger.debug(
+            f"Returning {len(window)} messages "
+            f"(start_idx={start_idx}, last_n={last_n}, include_reasoning={include_reasoning})"
+        )
+
+        return window
 
     async def clear_session(self, user_id: str, session_id: str):
         key = self._get_session_key(user_id, session_id)
