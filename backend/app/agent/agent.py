@@ -255,21 +255,15 @@ class Agent:
 
                     # Check if it returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
+                        logger.debug(f"Properly final_answer called")
                         return str(observation.answer), messages[initial_message_count:]
-
-                    # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
-                    obs_msg += "\n\n"
-                    obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
-                    messages.append({"role": "user", "content": obs_msg})
+                    else:
+                        logger.debug(f"FinalAnswerException not called")
+                        return str(observation), messages[initial_message_count:]
                 else:
                     # Fallback: if no code was found, strictly prompt for it.
                     logger.warning("No code block found in LLM response.")
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
-                        }
-                    )
+                    return str(step_data.thought), messages[initial_message_count:]
 
                 step_count += 1
 
@@ -339,25 +333,28 @@ class Agent:
 
                     # Check if execution returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
+                        logger.debug(f"Properly final_answer called")
                         yield {"type": "final", "content": str(observation.answer)}
                         return
+                    else:
+                        logger.debug(f"FinalAnswerException not called")
+                        yield {"type": "final", "content": obs_msg}
+                        return
 
-                    # Yield observation as separate event for persistence
-                    yield {"type": "observation", "content": obs_msg}
-
-                    # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
-                    obs_msg += "\n\n"
-                    obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
-                    messages.append({"role": "user", "content": obs_msg})
                 else:
                     # Fallback: if no code was found
                     logger.warning("No code block found in LLM response.")
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
-                        }
-                    )
+                    yield {
+                        "type": "final",
+                        "content": step_data.thought,
+                    }
+                    return
+                    # messages.append(
+                    #     {
+                    #         "role": "user",
+                    #         "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
+                    #     }
+                    # )
 
                 step_count += 1
 

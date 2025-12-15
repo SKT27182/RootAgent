@@ -1,44 +1,245 @@
+# =============================================================================
+# RootAgent Docker Compose Configuration
+# =============================================================================
+# Usage:
+#   docker compose up -d          # Start in background
+#   docker compose up --build     # Rebuild and start
+#   docker compose logs -f        # Follow logs
+#   docker compose down           # Stop all services
+#   docker compose down -v        # Stop and remove volumes (clears data!)
+# =============================================================================
+
 services:
+  # ===========================================================================
+  # REDIS - In-memory data store for sessions and caching
+  # ===========================================================================
   redis:
     image: redis:7-alpine
+    container_name: rootagent-redis
+    
+    # Hard resource limits (effective in docker compose)
+    mem_limit: 256m
+    cpus: "0.3"
+    
+    # Restart policy: always restart unless explicitly stopped
+    # Options: no, always, on-failure, unless-stopped
+    restart: unless-stopped
+    
+    # Run Redis with persistence and memory limits
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 160mb
+      --maxmemory-policy allkeys-lru
+      --port 9980
+      --tcp-keepalive 60              # ← Detect dead connections in ~60s
+    
+    # Persistent storage for Redis data
     volumes:
       - redis_data:/data
+    
+    # Resource limits to prevent runaway memory usage (can only be enforced in swarm mode)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    
+    # Health check to verify Redis is responding
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD", "redis-cli", "-p", "9980", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+      start_period: 5s
+    
+    # Isolated network for inter-service communication
+    networks:
+      - backend-network
+    
+    # Logging configuration to prevent log files from growing indefinitely
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
 
+  # ===========================================================================
+  # BACKEND - FastAPI application server
+  # ===========================================================================
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      # Build arguments (optional, for caching optimization)
+    
+    container_name: rootagent-backend
+    
+    # Hard resource limits (effective in docker compose)
+    mem_limit: 512m
+    cpus: "0.7"
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Load environment variables from .env file
     env_file:
       - .env
+    
+    # Override/add specific environment variables
     environment:
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=9980
+      # Ensure Python doesn't buffer output (important for logging)
+      - PYTHONUNBUFFERED=1
+      # Disable Python bytecode generation in container
+      - PYTHONDONTWRITEBYTECODE=1
+      # Other useful ones
+      - PYTHONFAULTHANDLER=1       # Print traceback on crash/segfault
+      - PYTHONHASHSEED=random      # Randomize hash seed (security)
+    
+    # Service dependencies with health conditions
     depends_on:
       redis:
         condition: service_healthy
+    
+    # Expose port only to other containers (not to host)
     expose:
       - "8000"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.7'
+          memory: 512M
+        reservations:
+          cpus: '0.15'
+          memory: 128M
+    
+    # Health check for the backend API
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Network configuration
+    networks:
+      - backend-network
+      - frontend-network
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Read-only root filesystem (optional, uncomment if your app supports it) writing logs to /tmp
+    # read_only: true
+    
+    # Temporary filesystem for /tmp if needed
+    tmpfs:
+      - /tmp:size=64M
 
+  # ===========================================================================
+  # FRONTEND - Nginx serving static files and reverse proxy
+  # ===========================================================================
   frontend:
     build:
       context: frontend
       dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    
+    container_name: rootagent-frontend
+    
+    # Hard resource limits (effective in docker compose)
+    mem_limit: 64m
+    cpus: "0.1"
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Map container port 80 to host port 80
     ports:
       - "80:80"
+      # Uncomment for HTTPS (requires SSL setup in nginx.conf)
+      # - "443:443"
+    
+    # Dependencies
     depends_on:
       backend:
         condition: service_healthy
+    
+    # Resource limits (Nginx is lightweight)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 16M
+    
+    # Health check for Nginx
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Network configuration (only needs to reach backend)
+    networks:
+      - frontend-network
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
 
+# =============================================================================
+# NETWORKS - Isolated networks for security
+# =============================================================================
+# 
+# Network topology:
+#   backend-network:  Redis <---> Backend (Redis isolated from frontend)
+#   frontend-network: Backend <---> Frontend (Frontend can reach backend only)
+#
+#   Frontend ──✗──> Redis (cannot access, different network = SECURE!)
+#
+networks:
+  backend-network:
+    driver: bridge
+    # Redis and Backend only
+  frontend-network:
+    driver: bridge
+    # Backend and Frontend only
+
+# =============================================================================
+# VOLUMES - Persistent storage
+# =============================================================================
 volumes:
   redis_data:
+    driver: local
+    # Optional: Use specific volume options
+    # driver_opts:
+    #   type: none
+    #   device: /path/to/host/directory
+    #   o: bind
