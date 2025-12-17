@@ -32,7 +32,7 @@ services:
       --maxmemory 160mb
       --maxmemory-policy allkeys-lru
       --port 9980
-      --tcp-keepalive 60              # ← Detect dead connections in ~60s
+      --tcp-keepalive 60              
     
     # Persistent storage for Redis data
     volumes:
@@ -71,6 +71,14 @@ services:
   # BACKEND - FastAPI application server
   # ===========================================================================
   backend:
+    develop:
+      watch:
+        - action: sync
+          path: ./backend
+          target: /app/backend
+        - action: rebuild
+          path: ./pyproject.toml
+
     build:
       context: .
       dockerfile: backend/Dockerfile
