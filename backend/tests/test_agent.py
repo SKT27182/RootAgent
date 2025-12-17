@@ -10,7 +10,7 @@ from typing import List
 sys.path.append(os.getcwd())
 
 from backend.app.agent.agent import Agent, FunctionTool
-from backend.app.agent.executor import CodeExecutor, FinalAnswerException
+from backend.app.services.code_executor import CodeExecutor, FinalAnswerException
 from backend.app.agent.constants import AUTHORIZED_IMPORTS
 from backend.app.services.redis_store import RedisStore
 from backend.app.models.chat import Message

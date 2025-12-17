@@ -37,6 +37,12 @@ class Config:
     REDIS_SSL = os.environ.get("REDIS_SSL", "false").lower() == "true"
     SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", 172800))  # 2 days
 
+    # Executor Settings
+    USE_CONTAINERIZED_EXECUTOR = (
+        os.environ.get("USE_CONTAINERIZED_EXECUTOR", "false").lower() == "true"
+    )
+    EXECUTOR_URL = os.environ.get("EXECUTOR_URL", "http://localhost:8001")
+
     # JWT Settings
     JWT_SECRET_KEY = os.environ.get(
         "JWT_SECRET_KEY", "your-super-secret-key-change-in-production"

@@ -11,6 +11,71 @@
 
 services:
   # ===========================================================================
+  # EXECUTOR - Isolated code execution container
+  # ===========================================================================
+  executor:
+    build:
+      context: backend/executor
+      dockerfile: Dockerfile
+    
+    container_name: rootagent-executor
+    
+    # Hard resource limits - prevent runaway code from consuming resources
+    mem_limit: 256m
+    cpus: "0.5"
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Network - only accessible by backend
+    networks:
+      - executor-network
+    
+    # Expose port to host for testing (remove in production)
+    ports:
+      - "8001:8001"
+    
+    # Expose port only to other containers
+    expose:
+      - "8001"
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    
+    # Security options - important for sandboxing
+    security_opt:
+      - no-new-privileges:true
+    
+    # Read-only root filesystem for extra security
+    read_only: true
+    
+    # Temporary filesystem for code execution
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+
+  # ===========================================================================
   # REDIS - In-memory data store for sessions and caching
   # ===========================================================================
   redis:
@@ -26,13 +91,8 @@ services:
     restart: unless-stopped
     
     # Run Redis with persistence and memory limits
-    command: >
-      redis-server
-      --appendonly yes
-      --maxmemory 160mb
-      --maxmemory-policy allkeys-lru
-      --port 9980
-      --tcp-keepalive 60              # ← Detect dead connections in ~60s
+    # tcp-keepalive 60 = detect dead connections in ~60s
+    command: redis-server --appendonly yes --maxmemory 160mb --maxmemory-policy allkeys-lru --port 9980 --tcp-keepalive 60
     
     # Persistent storage for Redis data
     volumes:
@@ -93,6 +153,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=9980
+      - USE_CONTAINERIZED_EXECUTOR=true
+      - EXECUTOR_URL=http://executor:8001
       # Ensure Python doesn't buffer output (important for logging)
       - PYTHONUNBUFFERED=1
       # Disable Python bytecode generation in container
@@ -132,6 +194,7 @@ services:
     networks:
       - backend-network
       - frontend-network
+      - executor-network
     
     # Logging configuration
     logging:
@@ -231,6 +294,9 @@ networks:
   frontend-network:
     driver: bridge
     # Backend and Frontend only
+  executor-network:
+    driver: bridge
+    # Executor and Backend only (isolated code execution)
 
 # =============================================================================
 # VOLUMES - Persistent storage
