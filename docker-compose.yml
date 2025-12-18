@@ -15,8 +15,8 @@ services:
   # ===========================================================================
   executor:
     build:
-      context: backend/executor
-      dockerfile: Dockerfile
+      context: backend
+      dockerfile: executor/Dockerfile
     
     container_name: rootagent-executor
     
@@ -74,6 +74,10 @@ services:
     # Temporary filesystem for code execution
     tmpfs:
       - /tmp:size=64M,mode=1777
+    
+    # Mount shared logger utility from host
+    volumes:
+      - ./backend/app/utils:/app/utils:ro
 
   # ===========================================================================
   # REDIS - In-memory data store for sessions and caching

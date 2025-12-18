@@ -139,14 +139,24 @@ async def test_redis_save_get_imports(redis_store, mock_redis_client):
 
 @pytest.fixture
 def agent():
-    # Mock LLMClient to prevent actual API calls
+    # Mock LLMClient and httpx to prevent actual API/network calls
     with patch("backend.app.agent.agent.LLMClient") as MockLLM:
-        mock_instance = MockLLM.return_value
-        # Default behavior for generate
-        mock_instance.agenerate = AsyncMock(return_value="Mock Response")
+        with patch("backend.app.services.code_executor.httpx") as mock_httpx:
+            mock_instance = MockLLM.return_value
+            # Default behavior for generate
+            mock_instance.agenerate = AsyncMock(return_value="Mock Response")
 
-        agent = Agent()
-        return agent
+            # Mock executor HTTP responses
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"result": "mocked"}
+            mock_response.raise_for_status = MagicMock()
+            mock_client.post.return_value = mock_response
+            mock_httpx.Client.return_value = mock_client
+            mock_httpx.AsyncClient.return_value = AsyncMock()
+
+            agent = Agent()
+            return agent
 
 
 def test_agent_initialization_defaults(agent):
@@ -330,18 +340,48 @@ async def test_run_no_code_fallback(agent):
 
 
 # =================================================================================================
-# Executor Tests (Brief sanity check as separate file usually covers executor, but requested 'all possible')
+# Executor Tests (HTTP client tests - actual execution is in container)
 # =================================================================================================
 
 
-def test_executor_authorized_imports():
-    executor = CodeExecutor()
-    # Should allow math
-    res = executor.execute("import math\nmath.sqrt(4)")
-    assert "2.0" in str(res)
+def test_executor_calls_service():
+    """Test that CodeExecutor makes HTTP calls to executor service."""
+    with patch("backend.app.services.code_executor.httpx") as mock_httpx:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "result": "2.0",
+            "new_functions": {},
+            "new_imports": [],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_httpx.Client.return_value = mock_client
+        mock_httpx.AsyncClient.return_value = MagicMock()
+
+        executor = CodeExecutor()
+        res = executor.execute("import math\nmath.sqrt(4)")
+
+        # Verify HTTP call was made
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        assert "/execute" in call_args[0][0]
+        assert "math.sqrt(4)" in call_args[1]["json"]["code"]
+        assert res == "2.0"
 
 
-def test_executor_blocked_import():
-    executor = CodeExecutor()
-    res = executor.execute("import os")
-    assert "ImportError" in str(res) or "not allowed" in str(res)
+def test_executor_handles_error_response():
+    """Test that CodeExecutor handles error responses from service."""
+    with patch("backend.app.services.code_executor.httpx") as mock_httpx:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"error": "ImportError: os not allowed"}
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_httpx.Client.return_value = mock_client
+        mock_httpx.AsyncClient.return_value = MagicMock()
+
+        executor = CodeExecutor()
+        with pytest.raises(Exception) as exc_info:
+            executor.execute("import os")
+        assert "ImportError" in str(exc_info.value)

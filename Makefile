@@ -52,6 +52,10 @@ up:
 up-build:
 	docker compose up -d --build
 
+# Start with build
+up-build-debug:
+	docker compose up --build
+
 # Stop services
 down:
 	docker compose down

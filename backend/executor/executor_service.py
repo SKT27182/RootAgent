@@ -9,17 +9,13 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import traceback
-import logging
-import sys
+import os
 from smolagents import LocalPythonExecutor
 
-# Configure logging - using standard library since this is an isolated container
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-logger = logging.getLogger("executor")
+# Use shared logger (copied into container via Dockerfile)
+from utils.logger import create_logger
+
+logger = create_logger(__name__, level=os.environ.get("LOG_LEVEL", "debug"))
 
 # Authorized imports for sandboxed execution
 AUTHORIZED_IMPORTS = [
@@ -150,7 +146,6 @@ async def execute_code(request: ExecuteRequest) -> ExecuteResponse:
     - Standard builtins available
     - Authorized imports only
     """
-    logger.info("=" * 50)
     logger.info("Received code execution request")
     logger.debug(f"Code to execute:\n{request.code}")
     logger.debug(f"Injected functions: {list(request.functions.keys())}")
@@ -170,7 +165,6 @@ async def execute_code(request: ExecuteRequest) -> ExecuteResponse:
 
         # Execute injected code first (to define functions/imports)
         if injected_code.strip():
-            logger.debug(f"Executing injected code:\n{injected_code}")
             executor(injected_code)
             logger.debug("Injected code executed successfully")
 

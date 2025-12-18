@@ -10,11 +10,7 @@ from backend.app.agent.constants import (
     CODE_BLOCK_OPENING_TAG,
     CODE_BLOCK_CLOSING_TAG,
 )
-from backend.app.services.code_executor import (
-    CodeExecutor,
-    ContainerizedCodeExecutor,
-    FinalAnswerException,
-)
+from backend.app.services.code_executor import CodeExecutor, FinalAnswerException
 from backend.app.agent.prompts import SYSTEM_PROMPT_TEMPLATE
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
@@ -66,15 +62,9 @@ class Agent:
     ):
         self.llm = LLMClient(model=model_name, api_key=api_key)
 
-        # Choose executor based on config
-        if Config.USE_CONTAINERIZED_EXECUTOR:
-            logger.info("Using ContainerizedCodeExecutor")
-            self.executor = ContainerizedCodeExecutor(
-                additional_functions=additional_functions
-            )
-        else:
-            logger.info("Using local CodeExecutor")
-            self.executor = CodeExecutor(additional_functions=additional_functions)
+        # Always use containerized executor
+        logger.info("Using containerized CodeExecutor")
+        self.executor = CodeExecutor(additional_functions=additional_functions)
 
         injected_code = ""
 

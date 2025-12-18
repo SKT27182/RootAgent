@@ -38,9 +38,6 @@ class Config:
     SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", 172800))  # 2 days
 
     # Executor Settings
-    USE_CONTAINERIZED_EXECUTOR = (
-        os.environ.get("USE_CONTAINERIZED_EXECUTOR", "false").lower() == "true"
-    )
     EXECUTOR_URL = os.environ.get("EXECUTOR_URL", "http://localhost:8001")
 
     # JWT Settings
