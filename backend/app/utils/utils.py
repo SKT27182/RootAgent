@@ -2,9 +2,10 @@ import os
 import uuid
 import tempfile
 from typing import List, Dict, Optional
+from pathlib import Path
 
 # Use system temp directory for uploaded CSV files (auto-cleaned by OS)
-DATA_DIR = tempfile.gettempdir()
+SHARED_TMP_DIR = Path(os.getenv("SHARED_TMP_DIR", "/tmp/shared"))
 
 
 def format_user_message(
@@ -27,7 +28,7 @@ def format_user_message(
 
     if csv_data:
         filename = f"data_{uuid.uuid4().hex[:8]}.csv"
-        filepath = os.path.join(DATA_DIR, filename)
+        filepath = os.path.join(SHARED_TMP_DIR, filename)
 
         try:
             with open(filepath, "w") as f:

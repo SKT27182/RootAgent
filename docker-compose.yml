@@ -78,6 +78,7 @@ services:
     # Mount shared logger utility from host
     volumes:
       - ./backend/app/utils:/app/utils:ro
+      - executor_tmp:/tmp/shared:ro
 
   # ===========================================================================
   # REDIS - In-memory data store for sessions and caching
@@ -159,6 +160,7 @@ services:
       - REDIS_PORT=9980
       - USE_CONTAINERIZED_EXECUTOR=true
       - EXECUTOR_URL=http://executor:8001
+      - SHARED_TMP_DIR=/tmp/shared
       # Ensure Python doesn't buffer output (important for logging)
       - PYTHONUNBUFFERED=1
       # Disable Python bytecode generation in container
@@ -217,6 +219,9 @@ services:
     # Temporary filesystem for /tmp if needed
     tmpfs:
       - /tmp:size=64M
+
+    volumes:
+      - executor_tmp:/tmp/shared:rw
 
   # ===========================================================================
   # FRONTEND - Nginx serving static files and reverse proxy
@@ -313,3 +318,10 @@ volumes:
     #   type: none
     #   device: /path/to/host/directory
     #   o: bind
+
+  executor_tmp:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=64m,mode=1777
