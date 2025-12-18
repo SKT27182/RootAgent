@@ -11,7 +11,9 @@ logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
 class LLMClient:
     def __init__(
-        self, model: str = Config.DEFAULT_MODEL, api_key: Optional[str] = None
+        self,
+        model: str = Config.DEFAULT_MODEL,
+        api_key: Optional[str] = None,
     ):
         self.model = model
         self.api_key = api_key or Config.LLM_API_KEY

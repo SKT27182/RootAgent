@@ -55,7 +55,7 @@ class Agent:
     def __init__(
         self,
         model_name: str = Config.DEFAULT_MODEL,
-        api_key: Optional[str] = None,
+        api_key: Optional[str] = Config.LLM_API_KEY,
         additional_functions: Optional[Dict[str, Callable]] = {},
         previous_functions: Dict[str, str] = {},
         previous_imports: Set[str] = set(),

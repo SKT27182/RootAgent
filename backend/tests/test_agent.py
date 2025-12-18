@@ -15,6 +15,7 @@ from backend.app.agent.constants import AUTHORIZED_IMPORTS
 from backend.app.services.redis_store import RedisStore
 from backend.app.models.chat import Message
 from backend.app.models.agent import AgentStep
+from backend.app.agent.llm import LLMClient
 
 # =================================================================================================
 # RedisStore Tests
@@ -149,11 +150,18 @@ def agent():
         return agent
 
 
-def test_agent_initialization_defaults(agent):
-    assert agent.max_steps == 15
-    assert isinstance(agent.executor, CodeExecutor)
-    # Check default tools if any
-    assert agent.tools == {}
+## Actual llm call test
+@pytest.mark.anyio
+@pytest.mark.llm
+async def test_llm_agenerate_real_call():
+    llm = LLMClient()
+    messages = [
+        {"role": "system", "content": "You are a precise assistant."},
+        {"role": "user", "content": "Reply with exactly the word: OK"},
+    ]
+    response = await llm.agenerate(messages)
+    assert isinstance(response, str)
+    assert "OK" in response.strip()
 
 
 def test_agent_initialization_with_previous_state():
