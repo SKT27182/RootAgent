@@ -3,6 +3,9 @@ Code Executor Client
 
 HTTP client for the containerized code execution service.
 All execution logic lives in executor/executor_service.py
+
+Agent tools are loaded directly in the executor via volume mount,
+so no serialization is needed here.
 """
 
 from typing import Any, Dict
@@ -24,12 +27,14 @@ class CodeExecutor:
     """
     Code executor that runs code in a separate Docker container.
     Communicates with the executor service via HTTP.
+
+    Agent tools (figure_to_base64, web_search, etc.) are loaded directly
+    in the executor container via volume mount, not sent via HTTP.
     """
 
     def __init__(
         self,
         executor_url: str = None,
-        additional_functions: Dict[str, Any] = {},
         timeout: float = 30.0,
     ):
         import httpx
@@ -41,10 +46,6 @@ class CodeExecutor:
 
         self.defined_functions: Dict[str, str] = {}
         self.defined_imports: set = set()
-
-        # Note: additional_functions (callable tools) can't be serialized to container
-        # They would need to be defined as code in the executor service itself
-        self._additional_functions = additional_functions
 
     def execute(self, code: str) -> Any:
         """

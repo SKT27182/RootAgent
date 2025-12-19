@@ -15,6 +15,9 @@ from smolagents import LocalPythonExecutor
 # Use shared logger (copied into container via Dockerfile)
 from utils.logger import create_logger
 
+# Import agent tools directly from mounted file
+from tools import AGENT_TOOLS
+
 logger = create_logger(__name__, level=os.environ.get("LOG_LEVEL", "debug"))
 
 # Authorized imports for sandboxed execution
@@ -39,6 +42,9 @@ class ExecuteRequest(BaseModel):
 
     code: str
     functions: Dict[str, str] = {}  # Previously defined functions {name: source}
+    external_tools: Dict[str, str] = (
+        {}
+    )  # Custom tools provided by the user {name: source}
     imports: List[str] = []  # Previously defined imports
 
 
@@ -66,7 +72,10 @@ def final_answer(answer):
 
 
 def create_executor() -> LocalPythonExecutor:
-    """Create a fresh executor instance with builtins."""
+    """
+    Create a fresh executor instance with builtins and agent tools.
+    Tools are imported directly from the mounted tools.py file.
+    """
     builtins = {
         "print": print,
         "range": range,
@@ -89,6 +98,10 @@ def create_executor() -> LocalPythonExecutor:
         "open": open,
         "final_answer": final_answer,
     }
+
+    # Add agent tools from mounted tools.py
+    builtins.update(AGENT_TOOLS)
+    logger.debug(f"Loaded agent tools: {list(AGENT_TOOLS.keys())}")
 
     executor = LocalPythonExecutor(
         additional_authorized_imports=AUTHORIZED_IMPORTS,
@@ -152,8 +165,9 @@ async def execute_code(request: ExecuteRequest) -> ExecuteResponse:
     logger.debug(f"Injected imports: {request.imports}")
 
     try:
+        # Create executor with agent tools loaded as builtins
         executor = create_executor()
-        logger.debug("Executor created successfully")
+        logger.debug("Executor created with agent tools")
 
         # Inject previous imports and functions
         injected_code = ""

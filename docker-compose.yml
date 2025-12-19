@@ -20,6 +20,11 @@ services:
     
     container_name: rootagent-executor
     
+    # Environment variables (passed from host .env)
+    environment:
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+    
     # Hard resource limits - prevent runaway code from consuming resources
     mem_limit: 256m
     cpus: "0.5"
@@ -75,9 +80,10 @@ services:
     tmpfs:
       - /tmp:size=64M,mode=1777
     
-    # Mount shared logger utility from host
+    # Mount shared logger utility and tools from host
     volumes:
       - ./backend/app/utils:/app/utils:ro
+      - ./backend/app/agent/tools.py:/app/tools.py:ro
       - executor_tmp:/tmp/shared:ro
 
   # ===========================================================================

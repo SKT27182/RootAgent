@@ -63,31 +63,33 @@ class Agent:
         self.llm = LLMClient(model=model_name, api_key=api_key)
 
         # Always use containerized executor
+        # Agent tools are loaded directly via volume mount in docker-compose
         logger.info("Using containerized CodeExecutor")
-        self.executor = CodeExecutor(additional_functions=additional_functions)
+        self.executor = CodeExecutor()
 
-        injected_code = ""
+        ## TODO: No need to inject code if we are using containerized executor, just update the executor
+        # injected_code = ""
 
-        # Inject imports
-        if previous_imports:
-            injected_code += "\n".join(previous_imports) + "\n\n"
+        # # Inject imports
+        # if previous_imports:
+        #     injected_code += "\n".join(previous_imports) + "\n\n"
 
-        logger.debug(
-            f"Injected imports: {list(previous_imports)}"
-            if previous_imports
-            else "No previous imports to inject"
-        )
+        # logger.debug(
+        #     f"Injected imports: {list(previous_imports)}"
+        #     if previous_imports
+        #     else "No previous imports to inject"
+        # )
 
-        # Inject functions
-        for func_name, func_source in previous_functions.items():
-            injected_code += func_source + "\n\n"
+        # # Inject functions
+        # for func_name, func_source in previous_functions.items():
+        #     injected_code += func_source + "\n\n"
 
-        self.executor.execute(injected_code)
-        logger.debug(
-            f"Injected functions: {list(previous_functions.keys())}"
-            if previous_functions
-            else "No previous functions to inject"
-        )
+        # self.executor.execute(injected_code)
+        # logger.debug(
+        #     f"Injected functions: {list(previous_functions.keys())}"
+        #     if previous_functions
+        #     else "No previous functions to inject"
+        # )
 
         self.executor.defined_functions.update(previous_functions)
         self.executor.defined_imports.update(previous_imports)

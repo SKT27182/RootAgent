@@ -1,17 +1,19 @@
 """
 Agent tools that are passed to the executor as additional functions.
 These functions are available to the LLM during code execution.
+
+This file is mounted directly into the executor container via docker-compose,
+so it must not import any backend-specific modules.
 """
 
 from __future__ import annotations
 import io
+import os
 import base64
-from typing import Any, List, Optional
-from pydantic import BaseModel, HttpUrl
+from typing import Any, List, Optional, Dict
 
 from urllib.parse import urlparse
 from tavily import TavilyClient
-from backend.app.core.config import Config
 
 ## Figure to Base64 Tool
 
@@ -53,13 +55,6 @@ def get_base_domain(url: str) -> str:
     return hostname
 
 
-class TavilySearchResult(BaseModel):
-    title: str
-    source: str
-    content: Optional[str] = None
-    score: Optional[float] = None
-
-
 class TavilyWebSearch:
     """
     Web search using Tavily API.
@@ -86,7 +81,7 @@ class TavilyWebSearch:
         query: str,
         domains: Optional[List[str]] = None,
         recency_days: Optional[int] = None,
-    ) -> List[TavilySearchResult]:
+    ) -> List[Dict[str, Any]]:
         """
         Perform web search and optionally retrieve full content.
         """
@@ -157,8 +152,9 @@ def web_search(query: str, recency_days: Optional[int] = None) -> List[Dict[str,
         - "Explain how quicksort works"
         - "Generate a Dockerfile"
     """
-
-    search = TavilyWebSearch(max_results=5, api_key=Config.TAVILY_API_KEY)
+    # Use environment variable for API key (works in both backend and executor container)
+    api_key = os.environ.get("TAVILY_API_KEY")
+    search = TavilyWebSearch(max_results=5, api_key=api_key)
     results = search.search(query, recency_days=recency_days)
 
     return results
