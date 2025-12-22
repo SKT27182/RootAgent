@@ -108,6 +108,7 @@ class TavilyWebSearch:
                 {
                     "title": r.get("title"),
                     "source": get_base_domain(r.get("url")),
+                    "url": r.get("url"),
                     "content": r.get("content"),
                     "score": r.get("score"),
                 }
@@ -141,6 +142,7 @@ def web_search(query: str, recency_days: Optional[int] = None) -> List[Dict[str,
         List of Dicts with keys:
             - title: Title of the source
             - source: Source domain or publisher
+            - url: URL of the source
             - content: Extracted relevant content
             - score: Relevance score
 

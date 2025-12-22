@@ -1,7 +1,7 @@
 from typing import Any, Dict, List
 import ast
 import textwrap
-from smolagents import LocalPythonExecutor
+from backend.app.utils.local_python_executor import LocalPythonExecutor
 
 from backend.app.agent.constants import AUTHORIZED_IMPORTS
 from backend.app.core.config import Config

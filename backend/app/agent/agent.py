@@ -55,7 +55,7 @@ class Agent:
     def __init__(
         self,
         model_name: str = Config.DEFAULT_MODEL,
-        api_key: Optional[str] = None,
+        api_key: Optional[str] = Config.LLM_API_KEY,
         additional_functions: Optional[Dict[str, Callable]] = {},
         previous_functions: Dict[str, str] = {},
         previous_imports: Set[str] = set(),
@@ -255,12 +255,14 @@ class Agent:
 
                     # Check if it returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
+                        logger.debug(f"Properly final_answer called")
                         return str(observation.answer), messages[initial_message_count:]
 
                     # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
                     obs_msg += "\n\n"
                     obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
                     messages.append({"role": "user", "content": obs_msg})
+
                 else:
                     # Fallback: if no code was found, strictly prompt for it.
                     logger.warning("No code block found in LLM response.")
@@ -339,19 +341,19 @@ class Agent:
 
                     # Check if execution returned a FinalAnswerException
                     if isinstance(observation, FinalAnswerException):
+                        logger.debug(f"Properly final_answer called")
                         yield {"type": "final", "content": str(observation.answer)}
                         return
-
-                    # Yield observation as separate event for persistence
-                    yield {"type": "observation", "content": obs_msg}
 
                     # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
                     obs_msg += "\n\n"
                     obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
                     messages.append({"role": "user", "content": obs_msg})
+
                 else:
                     # Fallback: if no code was found
                     logger.warning("No code block found in LLM response.")
+
                     messages.append(
                         {
                             "role": "user",
