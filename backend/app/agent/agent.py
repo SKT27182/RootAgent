@@ -349,17 +349,19 @@ class Agent:
                     obs_msg += "\n\n"
                     obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
                     messages.append({"role": "user", "content": obs_msg})
+                    yield {"type": "observation", "content": obs_msg}
 
                 else:
                     # Fallback: if no code was found
                     logger.warning("No code block found in LLM response.")
-
+                    error_msg = f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block."
                     messages.append(
                         {
                             "role": "user",
-                            "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
+                            "content": error_msg,
                         }
                     )
+                    yield {"type": "observation", "content": error_msg}
 
                 step_count += 1
 
