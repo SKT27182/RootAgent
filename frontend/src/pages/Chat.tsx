@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import type { Message as MessageType } from "@/types"
 import { getSessions, deleteSession, getHistory } from "@/api"
-import { Trash2, Copy, Send, Plus, Loader2 } from "lucide-react"
+import { Trash2, Copy, Send, Plus, Loader2, Sun, Moon, Menu, Settings2, X } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from "@/lib/utils"
@@ -27,10 +27,24 @@ export default function Chat() {
   const [streamingContent, setStreamingContent] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   
+  // Theme state
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  
+  // Mobile sidebar states
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false)
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
   const streamingContentRef = useRef("")
+
+  // Handle Theme Change
+  useEffect(() => {
+    const root = window.document.documentElement
+    root.classList.remove('light', 'dark')
+    root.classList.add(theme)
+  }, [theme])
 
   // Fetch sessions on mount and when userId changes
   useEffect(() => {
@@ -43,6 +57,8 @@ export default function Chat() {
   useEffect(() => {
     if (currentSessionId) {
       loadHistory(currentSessionId);
+      // Close sidebar on mobile when session selected
+      setIsLeftSidebarOpen(false);
     } else {
       setMessages([]);
     }
@@ -88,6 +104,7 @@ export default function Chat() {
     setMessages([]);
     setStreamingContent("");
     streamingContentRef.current = "";
+    setIsLeftSidebarOpen(false);
   }
 
   const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
@@ -155,32 +172,36 @@ export default function Chat() {
             setStreamingContent(prev => prev + data.content);
         } else if (data.type === "step_separator") {
             // End of a reasoning step
-            setMessages(prev => [
-                ...prev,
-                {
-                    role: "assistant",
-                    content: streamingContentRef.current, // The accumulated content is reasoning
-                    is_reasoning: true, // Mark as reasoning
-                    timestamp: new Date().toISOString()
-                }
-            ]);
+            const stepReasoning = streamingContentRef.current;
+            if (stepReasoning.trim()) {
+                setMessages(prev => [
+                    ...prev,
+                    {
+                        role: "assistant",
+                        content: stepReasoning, // The accumulated content is reasoning
+                        is_reasoning: true, // Mark as reasoning
+                        timestamp: new Date().toISOString()
+                    }
+                ]);
+            }
             setStreamingContent(""); // Reset
             streamingContentRef.current = "";
         } else if (data.type === "observation" || data.type === "error") {
+            const pendingReasoning = streamingContentRef.current;
             setMessages(prev => {
                 const newMessages = [...prev]
                 // Commit any pending reasoning
-                if (streamingContentRef.current) {
+                if (pendingReasoning.trim()) {
                     newMessages.push({
                          role: "assistant",
-                         content: streamingContentRef.current,
+                         content: pendingReasoning,
                          is_reasoning: true,
                          timestamp: new Date().toISOString()
                     })
                 }
                 // Add the observation
                 newMessages.push({
-                    role: "assistant", // Using assistant role for rendering, but with is_reasoning=true
+                    role: "user", // Using user role for rendering blue box
                     content: data.content,
                     is_reasoning: true,
                     timestamp: new Date().toISOString()
@@ -190,13 +211,14 @@ export default function Chat() {
             setStreamingContent("");
             streamingContentRef.current = "";
         } else if (data.type === "final") {
+             const finalReasoning = streamingContentRef.current;
              // Save any remaining streaming content as reasoning
              setMessages(prev => {
                 const newMessages = [...prev]
-                if (streamingContentRef.current) {
+                if (finalReasoning.trim()) {
                      newMessages.push({
                         role: "assistant",
-                        content: streamingContentRef.current,
+                        content: finalReasoning,
                         is_reasoning: true,
                         timestamp: new Date().toISOString()
                     })
@@ -234,14 +256,34 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
+    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden relative">
+      {/* Mobile Overlay Backgrounds */}
+      {(isLeftSidebarOpen || isRightSidebarOpen) && (
+        <div 
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => {
+                setIsLeftSidebarOpen(false);
+                setIsRightSidebarOpen(false);
+            }}
+        />
+      )}
+
       {/* Left Sidebar: Sessions */}
-      <div className="w-64 border-r border-border bg-card flex flex-col">
+      <div className={cn(
+        "fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card flex flex-col transition-transform duration-300 ease-in-out md:relative md:translate-x-0 pb-safe",
+        isLeftSidebarOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="font-bold text-lg">Chats</h2>
-          <Button variant="ghost" size="icon" onClick={handleCreateSession}>
-            <Plus className="h-5 w-5" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={handleCreateSession}>
+                <Plus className="h-5 w-5" />
+            </Button>
+            {/* Mobile Close Button */}
+            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setIsLeftSidebarOpen(false)}>
+                <X className="h-5 w-5" />
+            </Button>
+          </div>
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-2">
@@ -281,7 +323,19 @@ export default function Chat() {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col relative min-h-0">
+      <div className="flex-1 flex flex-col relative min-h-0 w-full transition-all duration-300">
+        
+        {/* Mobile Header */}
+        <div className="md:hidden h-14 border-b border-border flex items-center justify-between px-4 bg-background">
+            <Button variant="ghost" size="icon" onClick={() => setIsLeftSidebarOpen(true)}>
+                <Menu className="h-5 w-5" />
+            </Button>
+            <span className="font-semibold text-sm">RootAgent</span>
+            <Button variant="ghost" size="icon" onClick={() => setIsRightSidebarOpen(true)}>
+                <Settings2 className="h-5 w-5" />
+            </Button>
+        </div>
+
         <div className="flex-1 min-h-0">
             <ScrollArea className="h-full w-full p-4">
                 <div className="space-y-6 max-w-4xl mx-auto pb-20"> {/* pb-20 for input area space */}
@@ -327,18 +381,45 @@ export default function Chat() {
                                 )}>
                                     {isThinking && <div className="text-xs font-mono uppercase mb-2 text-yellow-500 flex items-center gap-2">Thinking...</div>}
                                     {isObservation && <div className="text-xs font-mono uppercase mb-2 text-blue-500 flex items-center gap-2">System Observation</div>}
-                                    <div className="prose prose-invert max-w-none text-sm leading-relaxed break-words">
+                                    <div className={cn("prose max-w-none text-sm leading-relaxed break-words", theme === 'dark' && "prose-invert")}>
                                     <ReactMarkdown 
                                         remarkPlugins={[remarkGfm]}
                                         components={{
-                                            code({node, className, children, ...props}) {
-                                                const match = /language-(\w+)/.exec(className || '')
-                                                return match ? (
-                                                <div className="rounded-md bg-black/50 p-2 my-2 overflow-x-auto">
-                                                    <code className={className} {...props}>{children}</code>
-                                                </div>
-                                                ) : (
-                                                <code className="bg-black/20 rounded px-1" {...props}>{children}</code>
+                                            table({node, className, children, ...props}: any) {
+                                                return (
+                                                    <div className="my-4 w-full overflow-y-auto">
+                                                        <table className="w-full relative border-collapse text-sm" {...props}>
+                                                            {children}
+                                                        </table>
+                                                    </div>
+                                                )
+                                            },
+                                            thead({node, className, children, ...props}: any) {
+                                                return (
+                                                    <thead className="bg-muted text-left font-medium" {...props}>
+                                                        {children}
+                                                    </thead>
+                                                )
+                                            },
+                                            tr({node, className, children, ...props}: any) {
+                                                return (
+                                                    <tr className="m-0 border-t p-0 even:bg-muted/50" {...props}>
+                                                        {children}
+                                                    </tr>
+                                                )
+                                            },
+                                            th({node, className, children, ...props}: any) {
+                                                return (
+                                                    <th className="border px-4 py-2 text-left font-bold [&[align=center]]:text-center [&[align=right]]:text-right" {...props}>
+                                                        {children}
+                                                    </th>
+                                                )
+                                            },
+                                            td({node, className, children, ...props}: any) {
+                                                return (
+                                                    <td className="border px-4 py-2 text-left [&[align=center]]:text-center [&[align=right]]:text-right" {...props}>
+                                                        {children}
+                                                    </td>
                                                 )
                                             }
                                         }}
@@ -361,8 +442,49 @@ export default function Chat() {
                                 <div className="text-xs font-mono uppercase mb-2 text-yellow-500 flex items-center gap-2">
                                      <Loader2 className="h-3 w-3 animate-spin" /> Thinking...
                                 </div>
-                                <div className="prose prose-invert max-w-none text-sm">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingContent}</ReactMarkdown>
+                                <div className={cn("prose max-w-none text-sm", theme === 'dark' && "prose-invert")}>
+                                    <ReactMarkdown 
+                                        remarkPlugins={[remarkGfm]}
+                                        components={{
+                                            table({node, className, children, ...props}: any) {
+                                                return (
+                                                    <div className="my-4 w-full overflow-y-auto">
+                                                        <table className="w-full relative border-collapse text-sm" {...props}>
+                                                            {children}
+                                                        </table>
+                                                    </div>
+                                                )
+                                            },
+                                            thead({node, className, children, ...props}: any) {
+                                                return (
+                                                    <thead className="bg-muted text-left font-medium" {...props}>
+                                                        {children}
+                                                    </thead>
+                                                )
+                                            },
+                                            tr({node, className, children, ...props}: any) {
+                                                return (
+                                                    <tr className="m-0 border-t p-0 even:bg-muted/50" {...props}>
+                                                        {children}
+                                                    </tr>
+                                                )
+                                            },
+                                            th({node, className, children, ...props}: any) {
+                                                return (
+                                                    <th className="border px-4 py-2 text-left font-bold [&[align=center]]:text-center [&[align=right]]:text-right" {...props}>
+                                                        {children}
+                                                    </th>
+                                                )
+                                            },
+                                            td({node, className, children, ...props}: any) {
+                                                return (
+                                                    <td className="border px-4 py-2 text-left [&[align=center]]:text-center [&[align=right]]:text-right" {...props}>
+                                                        {children}
+                                                    </td>
+                                                )
+                                            }
+                                        }}
+                                    >{streamingContent}</ReactMarkdown>
                                 </div>
                             </Card>
                         </div>
@@ -391,9 +513,19 @@ export default function Chat() {
       </div>
 
       {/* Right Sidebar: Settings */}
-      <div className="w-72 border-l border-border bg-card p-6 flex flex-col space-y-6">
+      <div className={cn(
+        "fixed inset-y-0 right-0 z-50 w-72 border-l border-border bg-card p-6 flex flex-col space-y-6 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 pb-safe",
+        isRightSidebarOpen ? "translate-x-0" : "translate-x-full"
+      )}>
+        <div className="flex items-center justify-between lg:hidden mb-4">
+            <span className="font-bold">Settings</span>
+            <Button variant="ghost" size="icon" onClick={() => setIsRightSidebarOpen(false)}>
+                <X className="h-5 w-5" />
+            </Button>
+        </div>
+        
         <div>
-            <h2 className="font-bold text-lg mb-4">Control Panel</h2>
+            <h2 className="font-bold text-lg mb-4 hidden lg:block">Control Panel</h2>
             <div className="space-y-6">
                 <div className="space-y-2">
                     <h3 className="text-sm font-medium leading-none">Reasoning</h3>
@@ -422,6 +554,19 @@ export default function Chat() {
                         checked={showReasoning} 
                         onCheckedChange={setShowReasoning} 
                     />
+                </div>
+
+                <div className="space-y-4">
+                     <h3 className="text-sm font-medium leading-none">Appearance</h3>
+                     <div className="flex items-center justify-between space-x-2">
+                         <Label className="flex flex-col space-y-1">
+                             <span>Theme</span>
+                             <span className="font-normal text-xs text-muted-foreground">Toggle Dark/Light mode</span>
+                         </Label>
+                         <Button variant="ghost" size="icon" onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}>
+                             {theme === 'dark' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+                         </Button>
+                     </div>
                 </div>
 
                 <div className="space-y-4">
