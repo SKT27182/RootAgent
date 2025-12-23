@@ -1,4 +1,5 @@
 import json
+import time
 import redis.asyncio as redis
 from typing import List, Optional, Dict, Set
 from backend.app.models.chat import Message, Session
@@ -142,7 +143,7 @@ class RedisStore:
         await self.redis_client.delete(f"{key}:functions")
         await self.redis_client.delete(f"{key}:imports")
         # Remove from user's session list
-        await self.redis_client.srem(f"user:{user_id}:sessions", session_id)
+        await self.redis_client.zrem(f"user:{user_id}:sessions", session_id)
 
         return deleted > 0
 
@@ -212,11 +213,26 @@ class RedisStore:
         user_sessions_key = f"user:{user_id}:sessions"
         session_key = self._get_session_key(user_id, session_id)
 
-        # Check if this is a new session (not already tracked)
-        is_new = not await self.redis_client.sismember(user_sessions_key, session_id)
+        # Check for legacy SET type and migrate
+        key_type = await self.redis_client.type(user_sessions_key)
+        if key_type == "set":
+            logger.warning(f"Migrating legacy SET key {user_sessions_key} to ZSET")
+            old_sessions = await self.redis_client.smembers(user_sessions_key)
+            await self.redis_client.delete(user_sessions_key)
+            if old_sessions:
+                # Add all old sessions with score 0 (oldest)
+                await self.redis_client.zadd(
+                    user_sessions_key, {s: 0 for s in old_sessions}
+                )
 
-        # Add to user's session list
-        await self.redis_client.sadd(user_sessions_key, session_id)
+        # Check if this is a new session
+        # zscore returns None if member doesn't exist
+        score = await self.redis_client.zscore(user_sessions_key, session_id)
+        is_new = score is None
+
+        # Add to user's session list with current timestamp as score
+        # Note: zadd expects mapping {member: score}
+        await self.redis_client.zadd(user_sessions_key, {session_id: time.time()})
 
         # Set TTL on all session keys only when session is first created
         if is_new:
@@ -231,9 +247,20 @@ class RedisStore:
 
     async def get_user_sessions(self, user_id: str) -> List[str]:
         key = f"user:{user_id}:sessions"
-        sessions = await self.redis_client.smembers(key)
+
+        # Check for legacy SET type (just in case reading before writing)
+        key_type = await self.redis_client.type(key)
+        if key_type == "set":
+            # Fallback to smembers + sort? Or just return as is.
+            # Let's return as is but warn.
+            logger.warning(f"Key {key} is legacy SET. Returning unordered.")
+            sessions = await self.redis_client.smembers(key)
+            return list(sessions)
+
+        # Return sessions sorted by score (timestamp) descending (newest first)
+        sessions = await self.redis_client.zrevrange(key, 0, -1)
         logger.debug(f"Retrieved {len(sessions)} sessions for user {user_id}")
-        return list(sessions)
+        return sessions
 
     async def get_all_users(self) -> List[str]:
         """

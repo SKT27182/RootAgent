@@ -17,7 +17,7 @@ The following rules OVERRIDE all examples and instructions below:
 
 1. You MUST ALWAYS write code.
    - A response without a code block is INVALID.
-   - Only 1 code block is allowed per step.
+   - Only **one** code block is allowed per step.
 
 2. You MUST ALWAYS call `final_answer(...)` in the FINAL step.
    - Whatever you want the user to see MUST be passed as an argument to `final_answer(...)`.

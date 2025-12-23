@@ -119,43 +119,69 @@ class TavilyWebSearch:
 
 def web_search(query: str, recency_days: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Perform web search and optionally retrieve full content.
+    STRICT WEB SEARCH TOOL — INFORMATION RETRIEVAL ONLY
 
-    THIS TOOL IS FOR INFORMATION RETRIEVAL ONLY.
+    This function performs a web search and may optionally retrieve full webpage content.
 
-    You MUST use this tool only when:
-    - The question requires up-to-date, real-world, or external information
-    - The information cannot be derived from reasoning alone
-    - The information is not available in the model's static knowledge
+    USAGE OF THIS TOOL IS STRICTLY LIMITED.
+    Any misuse is considered a tool-selection error.
 
-    DO NOT use this tool when:
-    - The question can be solved using logic, reasoning, math, or code
-    - The task involves calculations, simulations, or algorithmic steps
-    - The task is programming-related (writing, debugging, or explaining code)
-    - The answer is deterministic and does not require external sources
+    YOU MUST USE THIS TOOL IF AND ONLY IF ALL OF THE FOLLOWING ARE TRUE:
+    1. The question explicitly requires up-to-date, real-world, or external information
+    2. The information CANNOT be reliably answered using reasoning alone
+    3. The information is NOT part of the model’s static or general knowledge
+    4. The answer depends on facts that may change over time (e.g., news, leadership, prices, releases)
+    5. You are prepared to wait for the tool output BEFORE generating a final response
 
-    Args:
-        query: The web search query.
-        recency_days: Optional number of days to filter results by.
+    YOU MUST NOT USE THIS TOOL UNDER ANY CIRCUMSTANCES IF:
+    - The task can be solved via logic, reasoning, math, or deduction
+    - The task involves programming (writing, debugging, reviewing, or explaining code)
+    - The task is algorithmic, procedural, or computational
+    - The answer is deterministic or universally known
+    - The user asks for explanations, tutorials, summaries, or conceptual knowledge
+    - The user provides all required information directly in the prompt
+    - The task involves creative writing, ideation, or opinion
+    - The task can be completed using internal model knowledge alone
 
-    Returns:
-        List of Dicts with keys:
-            - title: Title of the source
-            - source: Source domain or publisher
-            - url: URL of the source
-            - content: Extracted relevant content
-            - score: Relevance score
+    CRITICAL EXECUTION RULES:
+    - This tool MUST be called before answering, not after
+    - Do NOT partially answer before receiving tool output
+    - Do NOT fabricate or infer missing facts without tool results
+    - Do NOT combine this tool with reasoning-only answers
+    - If the tool returns no useful data, state that explicitly
 
-    Examples of VALID usage:
-        - "What are the latest developments in AI research?"
-        - "Recent news about OpenAI"
-        - "Current CEO of Microsoft"
+    ARGS:
+        query (str):
+            A precise, factual search query.
+            Must target external, real-world information.
+            Vague or exploratory queries are not allowed.
 
-    Examples of INVALID usage:
-        - "Write Python code to sort a list"
-        - "Solve 2x + 3 = 7"
-        - "Explain how quicksort works"
-        - "Generate a Dockerfile"
+        recency_days (Optional[int]):
+            Filters results to sources published within the specified number of days.
+            Use ONLY when freshness is required.
+
+    RETURNS:
+        List[Dict], where each dictionary contains:
+            - title (str): Source title
+            - source (str): Publisher or domain
+            - url (str): Source URL
+            - content (str): Extracted relevant text
+            - score (float): Relevance score
+
+    VALID USE CASES (NON-EXHAUSTIVE):
+    - Current CEO / leadership of a company
+    - Recent policy changes or government announcements
+    - Breaking or recent news events
+    - Latest product releases or pricing
+    - Recent research publications or reports
+
+    INVALID USE CASES (NON-EXHAUSTIVE):
+    - Writing or reviewing code
+    - Solving equations or math problems
+    - Explaining algorithms or concepts
+    - Generating Dockerfiles or configs
+    - Summarizing text already provided
+    - Answering “how does X work” questions
     """
 
     search = TavilyWebSearch(max_results=5, api_key=Config.TAVILY_API_KEY)

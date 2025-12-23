@@ -256,7 +256,7 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden relative">
+    <div className="flex h-[100dvh] w-full bg-background text-foreground overflow-hidden relative">
       {/* Mobile Overlay Backgrounds */}
       {(isLeftSidebarOpen || isRightSidebarOpen) && (
         <div 
@@ -270,7 +270,7 @@ export default function Chat() {
 
       {/* Left Sidebar: Sessions */}
       <div className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card flex flex-col transition-transform duration-300 ease-in-out md:relative md:translate-x-0 pb-safe",
+        "fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card flex flex-col transition-transform duration-300 ease-in-out md:relative md:translate-x-0 pb-safe h-full max-h-[100dvh] overflow-hidden",
         isLeftSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-4 border-b border-border flex items-center justify-between">
@@ -514,7 +514,7 @@ export default function Chat() {
 
       {/* Right Sidebar: Settings */}
       <div className={cn(
-        "fixed inset-y-0 right-0 z-50 w-72 border-l border-border bg-card p-6 flex flex-col space-y-6 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 pb-safe",
+        "fixed inset-y-0 right-0 z-50 w-72 border-l border-border bg-card p-6 flex flex-col space-y-6 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 pb-safe h-full max-h-[100dvh] overflow-hidden",
         isRightSidebarOpen ? "translate-x-0" : "translate-x-full"
       )}>
         <div className="flex items-center justify-between lg:hidden mb-4">
@@ -577,17 +577,6 @@ export default function Chat() {
                      <Button variant="outline" size="sm" className="w-full text-destructive hover:bg-destructive/10" onClick={logout}>
                         Logout
                      </Button>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-4">
-                     <h3 className="text-sm font-medium leading-none">Customization Tokens</h3>
-                     {/* Placeholder for future customization tokens */}
-                     <div className="grid gap-2">
-                        <Label htmlFor="max-tokens" className="text-xs">Max Tokens (Example)</Label>
-                        <Textarea id="custom-tokens" placeholder="Enter custom system tokens or context..." className="h-24 text-xs font-mono" />
-                     </div>
                 </div>
 
                 <Separator />
