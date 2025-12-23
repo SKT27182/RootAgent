@@ -1,85 +1,98 @@
+# =============================================================================
 # RootAgent Makefile
-# Usage: make [target]
+# Usage:
+#   make up-build          # runs v1 (default)
+#   make up-build v=v2     # runs v2
+#   make up v=v1           # rollback to v1
+# =============================================================================
 
-.PHONY: help build up down restart logs logs-backend logs-frontend logs-redis shell-backend shell-frontend clean prune dev dev-backend dev-frontend dev-redis
+.PHONY: help build build-fresh up up-build up-build-debug down down-volumes \
+        restart restart-backend restart-frontend logs logs-backend logs-frontend \
+        logs-redis ps shell-backend shell-frontend shell-redis clean prune reset \
+        dev dev-backend dev-frontend dev-redis dev-stop dev-stop-redis \
+        install test test-cov health
 
-# Default target
+# ================================
+# Version handling
+# ================================
+APP_NAME ?= rootagent
+v ?= v1
+
+export APP_NAME
+export APP_VERSION := $(v)
+
+# ================================
+# Help
+# ================================
 help:
 	@echo "RootAgent Commands:"
 	@echo ""
 	@echo "=== Docker Commands ==="
-	@echo "  make build        - Build all Docker images"
-	@echo "  make up           - Start all services (detached)"
-	@echo "  make up-build     - Build and start all services"
-	@echo "  make down         - Stop all services"
-	@echo "  make restart      - Restart all services"
-	@echo "  make logs         - View all logs (follow)"
-	@echo "  make logs-backend - View backend logs"
-	@echo "  make ps           - Show running containers"
-	@echo "  make clean        - Stop and remove containers"
+	@echo "  make build              - Build images (default v1)"
+	@echo "  make build v=v2         - Build images with version v2"
+	@echo "  make up                 - Start services"
+	@echo "  make up v=v2            - Start services with version v2"
+	@echo "  make up-build           - Build + start services"
+	@echo "  make up-build v=v2      - Build + start version v2"
+	@echo "  make down               - Stop services"
+	@echo "  make restart            - Restart services"
+	@echo "  make logs               - Follow all logs"
+	@echo "  make ps                 - Show running containers"
+	@echo "  make clean              - Stop and remove containers"
 	@echo ""
 	@echo "=== Local Development ==="
-	@echo "  make dev          - Run backend + Redis locally (no Docker for backend)"
-	@echo "  make dev-backend  - Run backend only (assumes Redis running)"
-	@echo "  make dev-frontend - Serve frontend with Python HTTP server"
-	@echo "  make dev-redis    - Start Redis in Docker only"
-	@echo "  make dev-stop     - Stop all local dev services"
-	@echo "  make install      - Install Python dependencies to venv"
-	@echo "  make test         - Run tests"
+	@echo "  make dev                - Backend + Redis (backend local)"
+	@echo "  make dev-backend        - Backend only"
+	@echo "  make dev-frontend       - Frontend locally"
+	@echo "  make dev-redis          - Redis in Docker"
+	@echo "  make dev-stop           - Stop local dev services"
+	@echo "  make install            - Install Python deps"
+	@echo "  make test               - Run tests"
 	@echo ""
-	@echo "First time setup:"
-	@echo "  cp .env.example .env"
-	@echo "  make install"
-	@echo "  make dev"
+	@echo "Current version: $(APP_VERSION)"
 
 # ================================
 # Docker Commands
 # ================================
 
-# Build all images
 build:
+	@echo "Building $(APP_NAME) version $(APP_VERSION)"
 	docker compose build
 
-# Build without cache
 build-fresh:
+	@echo "Building $(APP_NAME) version $(APP_VERSION) (no cache)"
 	docker compose build --no-cache
 
-# Start services
 up:
+	@echo "Starting $(APP_NAME) version $(APP_VERSION)"
 	docker compose up -d
 
-# Start with build
 up-build:
+	@echo "Building & starting $(APP_NAME) version $(APP_VERSION)"
 	docker compose up -d --build
 
-# Start with build and debug
 up-build-debug:
+	@echo "Building & starting $(APP_NAME) version $(APP_VERSION) (foreground)"
 	docker compose up --build
 
-# Stop services
 down:
 	docker compose down
 
-# Stop and remove volumes (WARNING: deletes Redis data)
 down-volumes:
 	docker compose down -v
 
-# Restart all services
 restart:
 	docker compose restart
 
-# Restart specific service
 restart-backend:
 	docker compose restart backend
 
 restart-frontend:
 	docker compose restart frontend
 
-# View all logs
 logs:
 	docker compose logs -f
 
-# View specific service logs
 logs-backend:
 	docker compose logs -f backend
 
@@ -89,11 +102,9 @@ logs-frontend:
 logs-redis:
 	docker compose logs -f redis
 
-# Show running containers
 ps:
 	docker compose ps
 
-# Open shell in containers
 shell-backend:
 	docker compose exec backend /bin/bash
 
@@ -103,69 +114,63 @@ shell-frontend:
 shell-redis:
 	docker compose exec redis redis-cli
 
-# Health check
 health:
 	@curl -s http://localhost/health || echo "Service not responding"
 
-# Clean up
 clean: down
 	docker compose rm -f
 
-# Remove all unused Docker resources (careful!)
 prune:
 	docker system prune -f
 
-# Full reset (WARNING: removes everything including volumes)
 reset: down-volumes
 	docker compose rm -f
 	docker system prune -f
 
 # ================================
-# Local Development Commands
+# Local Development
 # ================================
 
-# Install dependencies
 install:
 	@if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
-	@. .venv/bin/activate && pip install -e . 2>/dev/null || pip install -r requirements.txt 2>/dev/null || uv sync
+	@. .venv/bin/activate && pip install -e . 2>/dev/null || \
+	  pip install -r requirements.txt 2>/dev/null || uv sync
 
-# Run Redis in Docker only (for local dev)
 dev-redis:
 	docker compose up -d redis
 
-# Run backend locally (assumes Redis is running)
 dev-backend:
 	@echo "Starting backend locally..."
-	@. .venv/bin/activate && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+	@. .venv/bin/activate && \
+	 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Run backend + Redis (Redis in Docker, backend local)
 dev: dev-redis
-	@echo "Redis started in Docker. Starting backend locally..."
+	@echo "Redis started. Starting backend locally..."
 	@sleep 2
-	@. .venv/bin/activate && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+	@. .venv/bin/activate && \
+	 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Serve frontend locally with Python HTTP server
 dev-frontend:
 	@echo "Serving frontend at http://localhost:3000"
 	@cd frontend && python3 -m http.server 3000
 
-# Stop Redis (Docker) used for local dev
 dev-stop-redis:
 	docker compose stop redis
 	docker compose rm -f redis
 
-# Stop all local dev processes (kills uvicorn and http.server)
 dev-stop:
-	@echo "Stopping local development services..."
+	@echo "Stopping local dev services..."
 	@-pkill -f "uvicorn backend.app.main:app" 2>/dev/null || true
 	@-pkill -f "python3 -m http.server" 2>/dev/null || true
 	@docker compose stop redis 2>/dev/null || true
 	@echo "Local dev services stopped."
 
-# Run tests
+# ================================
+# Tests
+# ================================
+
 test:
 	@. .venv/bin/activate && pytest backend/tests/ -v
 
-# Run tests with coverage
 test-cov:
 	@. .venv/bin/activate && pytest backend/tests/ -v --cov=backend

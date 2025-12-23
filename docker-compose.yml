@@ -79,6 +79,7 @@ services:
         - action: rebuild
           path: ./pyproject.toml
 
+    image: ${APP_NAME:-rootagent-backend}:${APP_VERSION:-v1}
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -163,6 +164,7 @@ services:
   # FRONTEND - Nginx serving static files and reverse proxy
   # ===========================================================================
   frontend:
+    image: ${APP_NAME:-rootagent-frontend}:${APP_VERSION:-v1}
     build:
       context: frontend
       dockerfile: Dockerfile
