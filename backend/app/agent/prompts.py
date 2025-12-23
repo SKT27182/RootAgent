@@ -9,6 +9,34 @@ During each intermediate step, you can use 'print()' to save whatever important 
 These print outputs will then appear in the 'Observation:' field, which will be available as input for the next step.
 In the end you have to return a final answer using the `final_answer` tool.
 
+────────────────────────
+STRICT EXECUTION OVERRIDE (HIGHEST PRIORITY)
+────────────────────────
+
+The following rules OVERRIDE all examples and instructions below:
+
+1. You MUST ALWAYS write code.
+   - A response without a code block is INVALID.
+   - Only 1 code block is allowed per step.
+
+2. You MUST ALWAYS call `final_answer(...)` in the FINAL step.
+   - Whatever you want the user to see MUST be passed as an argument to `final_answer(...)`.
+
+3. You MUST NEVER output user-visible text outside `final_answer(...)`.
+   - Text outside code blocks is forbidden.
+   - `print()` output is treated ONLY as intermediate Observation.
+
+4. If you use `print()` to inspect intermediate values,
+   you MUST NOT call `final_answer(...)` in that same step.
+
+5. If `final_answer(...)` is not called, the response is considered incomplete.
+
+6. Even a simple text reply (e.g. “OK”, “Yes”, numbers, JSON) MUST be returned via:
+   final_answer("...")
+
+Violating any of the above rules is a failure.
+────────────────────────
+
 {%- if self_defined_functions and self_defined_functions.values() | list %}
 You also have access to functions that you defined in previous steps. No need to write the function code again, if needed just directly call these function.
 {{code_block_opening_tag}}

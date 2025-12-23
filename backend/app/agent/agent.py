@@ -18,6 +18,8 @@ from backend.app.models.agent import AgentStep
 from jinja2 import Template
 import re
 import uuid
+import ast
+from backend.app.utils.local_python_executor import check_import_authorized
 
 logger = create_logger(__name__, level=Config.LOG_LEVEL)
 
@@ -103,8 +105,41 @@ class Agent:
     def get_all_defined_functions(self) -> Tuple[Set[str], Dict[str, str]]:
         """
         Returns all functions defined during the session (previous + new).
+        Filters imports to only include authorized ones.
         """
-        return self.executor.defined_imports, self.executor.defined_functions
+        valid_imports = set()
+
+        for import_stmt in self.executor.defined_imports:
+            try:
+                tree = ast.parse(import_stmt)
+                is_valid = True
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            if not check_import_authorized(
+                                alias.name, AUTHORIZED_IMPORTS
+                            ):
+                                is_valid = False
+                                break
+                    elif isinstance(node, ast.ImportFrom):
+                        # node.module can be None for relative imports like 'from . import x'
+                        # We assume user code uses absolute imports for libraries
+                        if node.module and not check_import_authorized(
+                            node.module, AUTHORIZED_IMPORTS
+                        ):
+                            is_valid = False
+                            break
+                    if not is_valid:
+                        break
+
+                if is_valid:
+                    valid_imports.add(import_stmt)
+            except Exception as e:
+                logger.warning(
+                    f"Could not parse or validate import '{import_stmt}': {e}"
+                )
+
+        return valid_imports, self.executor.defined_functions
 
     def _initialize_messages(
         self,
@@ -192,6 +227,7 @@ class Agent:
         Parse the text response to extract Thought and Code.
         Returns an AgentStep object.
         """
+        logger.info(f"Full LLM Response: {response_text}")
         # Look for code block
         code_pattern = re.compile(r"```python(.*?)```", re.DOTALL)
         code_match = code_pattern.search(response_text)
@@ -243,11 +279,11 @@ class Agent:
                 step_data = self._parse_step(llm_response)
                 logger.info(f"--- Step {step_count} ---")
                 if step_data.thought:
-                    logger.info(f"Thought: {step_data.thought}")
+                    logger.debug(f"Thought: {step_data.thought}")
 
                 # 3. Handle Code Execution
                 if step_data.code:
-                    logger.info(f"Executing Code Block:\n{step_data.code}")
+                    logger.debug(f"Executing Code Block:\n{step_data.code}")
                     observation = self.executor.execute(step_data.code)
                     obs_msg = f"Observation: {observation}"
 
@@ -269,7 +305,7 @@ class Agent:
                     messages.append(
                         {
                             "role": "user",
-                            "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
+                            "content": f"Error: You did not provide any code block. Always give your final answer using final_answer('...') inside a code block.",
                         }
                     )
 
@@ -349,17 +385,19 @@ class Agent:
                     obs_msg += "\n\n"
                     obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
                     messages.append({"role": "user", "content": obs_msg})
+                    yield {"type": "observation", "content": obs_msg}
 
                 else:
                     # Fallback: if no code was found
                     logger.warning("No code block found in LLM response.")
-
+                    error_msg = f"Error: You did not provide any code block. Always give your final answer using final_answer('...') inside a code block."
                     messages.append(
                         {
                             "role": "user",
-                            "content": f"Error: You did not provide any code block. You must output code in a {CODE_BLOCK_OPENING_TAG} ... {CODE_BLOCK_CLOSING_TAG} block. If you have the answer, use `final_answer('...')` inside a code block.",
+                            "content": error_msg,
                         }
                     )
+                    yield {"type": "observation", "content": error_msg}
 
                 step_count += 1
 

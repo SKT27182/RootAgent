@@ -8,3 +8,4 @@ antigravity.json
 !.env.example
 *.pyc
 data
+frontend_old
