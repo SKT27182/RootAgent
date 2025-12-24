@@ -1,15 +1,35 @@
 # RootAgent
 
-An AI-powered chat agent with code execution capabilities, built with FastAPI (backend) and vanilla JavaScript (frontend).
+An AI-powered chat agent with code execution capabilities, built with FastAPI (backend) and React/Vite (frontend).
 
 ## Features
 
 - 🤖 **LLM-Powered Agent** - Uses LiteLLM to support multiple providers (OpenAI, Gemini, OpenRouter)
-- 💻 **Code Execution** - Safely executes Python code with persistent function definitions
-- 💬 **Chat Interface** - Clean UI with markdown rendering and syntax highlighting
+- 💻 **Code Execution** - Safely executes Python code in containerized sandbox with persistent function definitions
+- 📊 **Chart Generation** - Generate matplotlib plots and visualizations inline
+- 📁 **File Upload** - Upload CSV files and images for analysis
+- 💬 **Modern Chat Interface** - React-based UI with markdown rendering and syntax highlighting
 - 🔐 **Authentication** - JWT-based user authentication
 - 💾 **Persistence** - Redis-backed chat history and session management
+- 🌙 **Dark/Light Mode** - Theme toggle support
 - 🐳 **Docker Ready** - Full containerization with Docker Compose
+
+---
+
+## Tech Stack
+
+### Frontend
+- **React 19** with TypeScript
+- **Vite** for fast development and building
+- **Tailwind CSS** for styling
+- **Radix UI** for accessible components
+- **React Markdown** with GFM support
+
+### Backend
+- **FastAPI** with async support
+- **LiteLLM** for LLM provider abstraction
+- **Redis** for session and chat history storage
+- **JWT** authentication with bcrypt
 
 ---
 
@@ -22,7 +42,7 @@ An AI-powered chat agent with code execution capabilities, built with FastAPI (b
                              │
                              ▼
                    ┌─────────────────┐
-                   │     Nginx       │ Port 80 (public)
+                   │     Nginx       │ Port 80/443 (public)
                    │    Frontend     │
                    └────────┬────────┘
                             │
@@ -30,7 +50,7 @@ An AI-powered chat agent with code execution capabilities, built with FastAPI (b
          │                  │                  │
          ▼                  ▼                  ▼
     Static Files       API Routes         WebSocket
-    /, *.css, *.js     /health, /auth/*   /chat
+    /, *.css, *.js     /health, /auth/*   /chat/ws
          │                  │                  │
          ▼                  └────────┬─────────┘
     Served directly                  │
@@ -42,40 +62,18 @@ An AI-powered chat agent with code execution capabilities, built with FastAPI (b
                                      │
                                      ▼
                             ┌─────────────────┐
-                            │      Redis      │ Port 6379 (internal)
+                            │      Redis      │ Port 9980 (internal)
                             │  Sessions/Cache │
                             └─────────────────┘
 ```
 
 ### Docker Network Communication
 
-All services communicate over Docker's internal network:
-
 | Service | Internal Hostname | Port | External Access |
 |---------|-------------------|------|-----------------|
-| Frontend (Nginx) | `frontend` | 80 | ✅ Exposed |
+| Frontend (Nginx) | `frontend` | 80/443 | ✅ Exposed |
 | Backend (FastAPI) | `backend` | 8000 | ❌ Internal only |
-| Redis | `redis` | 6379 | ❌ Internal only |
-
-### Request Flow Example
-
-```
-User sends chat message:
-
-1. Browser ──POST /chat──▶ Nginx:80
-                              │
-2. Nginx proxies to ─────────▶ Backend:8000/chat
-                                    │
-3. Backend processes:               │
-   ├── Validates JWT token          │
-   ├── Fetches session from Redis ◀─┼──▶ Redis:6379
-   ├── Calls LLM API (external)     │
-   ├── Executes code (if needed)    │
-   └── Stores response in Redis ◀───┼──▶ Redis:6379
-                                    │
-4. Response flows back: ◀───────────┘
-   Backend ──▶ Nginx ──▶ Browser
-```
+| Redis | `redis` | 9980 | ❌ Internal only |
 
 ---
 
@@ -93,7 +91,7 @@ cd RootAgent
 
 ### 2. Configure Environment
 
-Edit `.env` with your API key:
+Copy `.env.example` to `.env` and configure:
 
 ```env
 LLM_API_KEY=your-api-key-here
@@ -102,22 +100,22 @@ LLM_MODEL=gemini/gemini-1.5-flash
 
 ### 3. Run
 
-**Option A: Local Development**
+**Option A: Docker (Recommended)**
 ```bash
-make dev           # Backend + Redis
-make dev-frontend  # Frontend (in another terminal)
+make up-build          # Build and start in background
+make up-build-debug    # Build and start in foreground (with logs)
 ```
 
-**Option B: Docker (Recommended)**
+**Option B: Local Development**
 ```bash
-docker compose up --build
+make dev               # Backend + Redis
+cd frontend && npm run dev  # Frontend (in another terminal)
 ```
 
 ### 4. Access
 
-- **Frontend**: http://localhost (Docker) or http://localhost:3000 (local)
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+- **Frontend**: http://localhost (Docker) or http://localhost:5173 (local dev)
+- **API Docs**: http://localhost/docs (requires authentication)
 
 ---
 
@@ -127,17 +125,22 @@ docker compose up --build
 RootAgent/
 ├── backend/
 │   ├── app/
-│   │   ├── agent/          # LLM agent logic
-│   │   ├── core/           # Config, constants
+│   │   ├── agent/          # LLM agent logic, tools, prompts
+│   │   ├── core/           # Config
 │   │   ├── models/         # Pydantic schemas
-│   │   ├── routers/        # API endpoints
-│   │   ├── services/       # Redis, Auth services
+│   │   ├── routers/        # API endpoints (chat, auth, health)
+│   │   ├── services/       # Redis store, Auth service
+│   │   ├── utils/          # Logger, message formatters
 │   │   └── main.py         # FastAPI app
 │   ├── tests/
 │   └── Dockerfile
 ├── frontend/
-│   ├── index.html
-│   ├── app.js
+│   ├── src/
+│   │   ├── components/     # UI components (Radix-based)
+│   │   ├── pages/          # Chat, Login pages
+│   │   ├── lib/            # Auth context, utilities
+│   │   └── App.tsx         # Main app with routing
+│   ├── nginx/              # Nginx configuration
 │   └── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
@@ -151,62 +154,37 @@ RootAgent/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LLM_API_KEY` | API key for LLM provider | *required* |
-| `LLM_MODEL` | Model name (LiteLLM format) | `openrouter/amazon/nova-2-lite-v1:free` |
+| `LLM_MODEL` | Model name (LiteLLM format) | `gemini/gemini-1.5-flash` |
 | `JWT_SECRET_KEY` | Secret for JWT signing | *auto-generated* |
 | `JWT_EXPIRATION_HOURS` | Token validity | `24` |
-| `REDIS_HOST` | Redis server host | `localhost` |
-| `REDIS_PORT` | Redis server port | `6379` |
-| `REDIS_PASSWORD` | Redis password (optional) | - |
-| `LOG_LEVEL` | Logging level | `info` |
+| `REDIS_HOST` | Redis server host | `redis` |
+| `REDIS_PORT` | Redis server port | `9980` |
+| `LOG_LEVEL` | Logging level | `INFO` |
 
 ---
 
 ## Makefile Commands
 
 ```bash
-make help          # Show all commands
+make help              # Show all commands
 
 # Docker
-make build         # Build images
-make up            # Start all services
-make down          # Stop all services
-make logs          # View logs
+make up-build          # Build and start all services
+make up-build-debug    # Build and start with logs (foreground)
+make down              # Stop all services
+make logs              # View logs
+make ps                # Show running containers
 
 # Local Development
-make install       # Install dependencies
-make dev           # Run backend + Redis
-make dev-frontend  # Serve frontend
-make dev-stop      # Stop local services
+make install           # Install dependencies
+make dev               # Run backend + Redis
+make dev-frontend      # Serve frontend
+make dev-stop          # Stop local services
 
 # Testing
-make test          # Run tests
-make test-cov      # Run with coverage
+make test              # Run tests
+make test-cov          # Run with coverage
 ```
-
----
-
-## Production Deployment
-
-### Docker Swarm with Secrets
-
-For production, use Docker Secrets instead of `.env` for sensitive values:
-
-```bash
-# Create secrets
-echo "your-jwt-secret" | docker secret create jwt_secret_key -
-echo "your-llm-key" | docker secret create llm_api_key -
-
-# Deploy stack
-docker stack deploy -c docker-compose.yml rootagent
-```
-
-### Generating a Secure JWT Secret
-
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-> ⚠️ **Important**: Never use the default JWT secret in production!
 
 ---
 
@@ -218,27 +196,48 @@ python -c "import secrets; print(secrets.token_hex(32))"
 | `/auth/register` | POST | Register new user |
 | `/auth/login` | POST | Login, get JWT |
 | `/auth/me` | GET | Get current user |
-| `/chat/sessions` | GET | List user sessions |
-| `/chat/sessions/{id}` | GET | Get session history |
-| `/chat/sessions/{id}` | DELETE | Delete session |
-| `/chat/ws/{session_id}` | WS | Chat WebSocket |
+| `/chat/sessions/{user_id}` | GET | List user sessions |
+| `/chat/history/{user_id}/{session_id}` | GET | Get session history |
+| `/chat/sessions/{user_id}/{session_id}` | DELETE | Delete session |
+| `/chat/ws` | WebSocket | Chat WebSocket |
+| `/document/` | POST | Upload document |
 
 ---
 
-## Development
+## Features in Detail
 
-### Running Tests
+### File Uploads
+- **CSV Files**: Upload CSV data for analysis. The agent can read and process the data.
+- **Images**: Upload images for vision-capable models to analyze.
+
+### Code Execution
+- Python code runs in an isolated environment
+- Persistent function definitions across messages
+- Support for data visualization with matplotlib
+
+### Agent Tools
+- `figure_to_base64`: Convert matplotlib figures to inline images
+- `web_search`: Search the web for current information (via Tavily)
+
+---
+
+## Production Deployment
+
+### Docker Compose
 
 ```bash
-make test
+# Build and run in background
+make up-build
+
+# View logs
+make logs
 ```
 
-### Code Structure
+### Security Notes
 
-- **Agent**: ReAct-style reasoning loop with code execution
-- **LLM Client**: Uses LiteLLM for provider-agnostic completions
-- **Redis Store**: Async session and chat history management
-- **Auth Service**: JWT creation/validation with bcrypt passwords
+- Change default JWT secret in production
+- Use HTTPS (configure SSL in nginx)
+- Set proper CORS origins
 
 ---
 
