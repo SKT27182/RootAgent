@@ -49,3 +49,48 @@ def format_user_message(
             )
 
     return user_content
+
+
+def format_assistant_message(content: str) -> List[Dict]:
+    """
+    Formats the assistant message into a structured format.
+    Detects base64 image data URIs and converts them to image_url type.
+    Remaining text is preserved as text type.
+
+    Args:
+        content: The raw assistant message content (may contain markdown images)
+
+    Returns:
+        List of structured content parts (text and/or image_url types)
+    """
+    import re
+
+    # Pattern to match markdown images with data URIs: ![...](data:image/...;base64,...)
+    # Also matches standalone data URIs
+    image_pattern = r"!\[([^\]]*)\]\((data:image\/[a-zA-Z]+;base64,[^\)]+)\)"
+
+    result = []
+    last_end = 0
+
+    for match in re.finditer(image_pattern, content):
+        # Add any text before this match
+        text_before = content[last_end : match.start()].strip()
+        if text_before:
+            result.append({"type": "text", "text": text_before})
+
+        # Add the image
+        image_url = match.group(2)
+        result.append({"type": "image_url", "image_url": {"url": image_url}})
+
+        last_end = match.end()
+
+    # Add any remaining text after the last match
+    text_after = content[last_end:].strip()
+    if text_after:
+        result.append({"type": "text", "text": text_after})
+
+    # If no images found, return the original content as text
+    if not result:
+        result.append({"type": "text", "text": content})
+
+    return result

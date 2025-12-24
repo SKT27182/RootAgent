@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import type { Message as MessageType } from "@/types"
 import { getSessions, deleteSession, getHistory } from "@/api"
-import { Trash2, Copy, Send, Plus, Loader2, Sun, Moon, Menu, Settings2, X } from "lucide-react"
+import { Trash2, Copy, Send, Plus, Loader2, Sun, Moon, Menu, Settings2, X, Paperclip, ImagePlus } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from "@/lib/utils"
@@ -36,6 +36,10 @@ export default function Chat() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const [csvFile, setCsvFile] = useState<{name: string, content: string} | null>(null)
+  const [images, setImages] = useState<{name: string, base64: string}[]>([])
 
   const streamingContentRef = useRef("")
 
@@ -125,6 +129,47 @@ export default function Chat() {
     // Suggest showing a toast here? For now just copy.
   }
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
+          alert('Please upload a CSV file');
+          return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target?.result as string;
+        setCsvFile({ name: file.name, content });
+      };
+      reader.readAsText(file);
+    }
+    // Reset input so same file can be selected again if needed
+    e.target.value = '';
+  }
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      Array.from(files).forEach(file => {
+        if (!file.type.startsWith('image/')) {
+          alert('Please upload image files only');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64 = event.target?.result as string;
+          setImages(prev => [...prev, { name: file.name, base64 }]);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    e.target.value = '';
+  }
+
+  const removeImage = (index: number) => {
+    setImages(prev => prev.filter((_, i) => i !== index));
+  }
+
   const sendMessage = () => {
     if (!input.trim() || isStreaming) return;
 
@@ -134,18 +179,25 @@ export default function Chat() {
       user_id: userId,
       session_id: currentSessionId,
       include_reasoning: useReasoning,
-      images: null, // Image support can be added later
-      csv_data: null
+      images: images.length > 0 ? images.map(img => img.base64) : null,
+      csv_data: csvFile ? csvFile.content : null
     };
 
     // Optimistic update
+    const attachmentInfo = [
+      csvFile ? `[CSV: ${csvFile.name}]` : '',
+      images.length > 0 ? `[${images.length} image(s)]` : ''
+    ].filter(Boolean).join(' ');
+    
     const userMsg: MessageType = {
         role: "user",
-        content: input,
+        content: input + (attachmentInfo ? `\n\n${attachmentInfo}` : ""),
         timestamp: new Date().toISOString(),
     };
     setMessages(prev => [...prev, userMsg]);
     setInput("");
+    setCsvFile(null);
+    setImages([]);
     setIsStreaming(true);
     streamingContentRef.current = "";
 
@@ -362,6 +414,11 @@ export default function Chat() {
                         // Ensure code blocks start on a new line
                         if (typeof displayContent === 'string') {
                              displayContent = displayContent.replace(/([^\n])```/g, '$1\n```');
+                             
+                             // Fallback: If content contains a raw data:image line that isn't already in markdown IMG tag
+                             // This is a heuristic to help if the model outputs just the base64 string or the tool output is displayed raw
+                             // We look for "data:image..." at the start of a line that DOESN'T have ![]() syntax around it
+                             displayContent = displayContent.replace(/^(?!.*!\[).*(data:image\/[a-zA-Z]+;base64,[^\s\)]+).*$/gm, '![Generated Image]($1)');
                         }
 
                         const isObservation = msg.role === "user" && msg.is_reasoning;
@@ -384,6 +441,7 @@ export default function Chat() {
                                     <div className={cn("prose max-w-none text-sm leading-relaxed break-words", theme === 'dark' && "prose-invert")}>
                                     <ReactMarkdown 
                                         remarkPlugins={[remarkGfm]}
+                                        urlTransform={(uri) => uri}
                                         components={{
                                             table({node, className, children, ...props}: any) {
                                                 return (
@@ -445,6 +503,7 @@ export default function Chat() {
                                 <div className={cn("prose max-w-none text-sm", theme === 'dark' && "prose-invert")}>
                                     <ReactMarkdown 
                                         remarkPlugins={[remarkGfm]}
+                                        urlTransform={(uri) => uri}
                                         components={{
                                             table({node, className, children, ...props}: any) {
                                                 return (
@@ -496,18 +555,92 @@ export default function Chat() {
 
         {/* Input Area */}
         <div className="p-4 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-            <div className="max-w-4xl mx-auto flex items-end gap-2">
-                <Textarea 
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type a message..."
-                    className="min-h-[60px] resize-none"
-                    disabled={isStreaming}
-                />
-                <Button onClick={sendMessage} disabled={!input.trim() || isStreaming} className="h-[60px] w-[60px]">
-                    {isStreaming ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
-                </Button>
+            <div className="max-w-4xl mx-auto flex flex-col gap-2">
+                {csvFile && (
+                    <div className="flex items-center gap-2 bg-muted p-2 rounded-md w-fit text-sm animate-in fade-in slide-in-from-bottom-2">
+                        <span className="font-medium text-xs flex items-center gap-1">
+                            <Paperclip className="h-3 w-3" />
+                            {csvFile.name}
+                        </span>
+                        <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-4 w-4 hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => setCsvFile(null)}
+                        >
+                            <X className="h-3 w-3" />
+                        </Button>
+                    </div>
+                )}
+                {images.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                        {images.map((img, idx) => (
+                            <div key={idx} className="relative group">
+                                <img 
+                                    src={img.base64} 
+                                    alt={img.name} 
+                                    className="h-16 w-16 object-cover rounded-md border border-border"
+                                />
+                                <Button 
+                                    variant="destructive" 
+                                    size="icon" 
+                                    className="h-4 w-4 absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onClick={() => removeImage(idx)}
+                                >
+                                    <X className="h-3 w-3" />
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <div className="flex items-end gap-2 w-full">
+                    <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        accept=".csv"
+                        onChange={handleFileSelect}
+                    />
+                    <input 
+                        type="file" 
+                        ref={imageInputRef} 
+                        className="hidden" 
+                        accept="image/*"
+                        multiple
+                        onChange={handleImageSelect}
+                    />
+                    <Button 
+                        variant="outline" 
+                        size="icon"
+                        className="h-[60px] w-[60px] shrink-0"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isStreaming}
+                        title="Upload CSV"
+                    >
+                        <Paperclip className="h-5 w-5" />
+                    </Button>
+                    <Button 
+                        variant="outline" 
+                        size="icon"
+                        className="h-[60px] w-[60px] shrink-0"
+                        onClick={() => imageInputRef.current?.click()}
+                        disabled={isStreaming}
+                        title="Upload Images"
+                    >
+                        <ImagePlus className="h-5 w-5" />
+                    </Button>
+                    <Textarea 
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Type a message..."
+                        className="min-h-[60px] resize-none"
+                        disabled={isStreaming}
+                    />
+                    <Button onClick={sendMessage} disabled={(!input.trim() && !csvFile && images.length === 0) || isStreaming} className="h-[60px] w-[60px] shrink-0">
+                        {isStreaming ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+                    </Button>
+                </div>
             </div>
         </div>
       </div>

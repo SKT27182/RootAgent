@@ -36,7 +36,7 @@ def figure_to_base64(fig: Any) -> str:
     buf.seek(0)
     img_base64 = base64.b64encode(buf.read()).decode("utf-8")
     buf.close()
-    return img_base64
+    return f"![Generated Image](data:image/png;base64,{img_base64})"
 
 
 ## Web Search Tool

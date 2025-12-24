@@ -6,7 +6,7 @@ from backend.app.agent.agent import Agent
 from backend.app.agent.tools import AGENT_TOOLS
 from backend.app.core.config import Config
 from backend.app.utils.logger import create_logger
-from backend.app.utils.utils import format_user_message
+from backend.app.utils.utils import format_user_message, format_assistant_message
 import uuid
 from datetime import datetime, timezone
 import json
@@ -126,9 +126,11 @@ async def chat_endpoint(
             await redis_store.save_message(user_id, session_id, reasoning_message)
 
         # Create Assistant Message (Final Answer)
+        # Format the response to extract any base64 images into structured format
+        formatted_response = format_assistant_message(response_text)
         assistant_message = Message(
             role="assistant",
-            content=response_text,
+            content=json.dumps(formatted_response),
             timestamp=datetime.now(timezone.utc),
             is_reasoning=False,
         )
@@ -368,14 +370,16 @@ async def websocket_endpoint(
 
         # Save Assistant Message (Final)
         if final_answer:
+            # Format the response to extract any base64 images into structured format
+            formatted_response = format_assistant_message(final_answer)
             assistant_message = Message(
                 role="assistant",
-                content=final_answer,
+                content=json.dumps(formatted_response),
                 timestamp=datetime.now(timezone.utc),
                 is_reasoning=False,
             )
             logger.debug(
-                f"Saving Assistant Message: {final_answer} for session {session_id}"
+                f"Saving Assistant Message: {final_answer[:100]}... for session {session_id}"
             )
             await redis_store.save_message(user_id, session_id, assistant_message)
 
