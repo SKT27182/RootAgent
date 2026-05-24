@@ -1,23 +1,21 @@
-from typing import Optional, Literal
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class AgentStep(BaseModel):
-    """
-    Represents a single step in the Agent's reasoning loop.
-    """
+    """Structured JSON step from the LLM."""
 
-    thought: str = Field(..., description="The reasoning thought process.")
-    code: Optional[str] = Field(None, description="The code block to execute.")
+    thinking: str = Field(..., description="Reasoning for this step.")
+    code: Optional[str] = Field(None, description="Python code to execute.")
+    final_answer: Optional[str] = Field(
+        None, description="User-visible answer when is_final_answer is true."
+    )
     is_final_answer: bool = Field(
-        False, description="Whether this step contains the final answer."
+        False, description="Whether this step ends the task."
     )
 
 
 class AgentObservation(BaseModel):
-    """
-    Represents the output/observation from executing a code block.
-    """
-
     output: str
     error: Optional[str] = None

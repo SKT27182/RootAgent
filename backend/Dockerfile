@@ -1,39 +1,22 @@
-# =========================
-# Build stage
-# =========================
-FROM python:3.12-slim AS builder
+# =============================================================================
+# RootAgent Backend - Dockerfile
+# =============================================================================
+FROM python:3.12-slim
 
-# Install uv
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Ensure uv creates .venv inside project
-ENV UV_PROJECT_ENVIRONMENT=.venv
-
-# Copy dependency files
 COPY pyproject.toml uv.lock ./
+RUN uv pip install --system -e .
 
-# Install dependencies into .venv
-RUN uv sync --frozen --no-dev --no-install-project
+COPY . .
 
+ENV API_PORT=8890
 
-# =========================
-# Runtime stage
-# =========================
-FROM python:3.12-slim
+EXPOSE 8890
 
-WORKDIR /app
-
-# Copy virtual environment
-COPY --from=builder /app/.venv /app/.venv
-
-# Activate venv
-ENV PATH="/app/.venv/bin:$PATH"
-
-# Copy application code
-COPY backend/ ./backend/
-
-EXPOSE 8000
-
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${API_PORT}"]

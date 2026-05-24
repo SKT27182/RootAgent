@@ -11,7 +11,7 @@ from pydantic import BaseModel, HttpUrl
 
 from urllib.parse import urlparse
 from tavily import TavilyClient
-from backend.app.core.config import Config
+from app.core.config import settings
 
 ## Figure to Base64 Tool
 
@@ -184,7 +184,7 @@ def web_search(query: str, recency_days: Optional[int] = None) -> List[Dict[str,
     - Answering “how does X work” questions
     """
 
-    search = TavilyWebSearch(max_results=5, api_key=Config.TAVILY_API_KEY)
+    search = TavilyWebSearch(max_results=5, api_key=settings.tavily_api_key)
     results = search.search(query, recency_days=recency_days)
 
     return results

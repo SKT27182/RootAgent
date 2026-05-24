@@ -1,36 +1,32 @@
-import os
 import secrets
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from backend.app.routers import health, chat, document, auth
-from backend.app.core.config import Config
-from backend.app.utils.logger import create_logger
 
-logger = create_logger(__name__, level=Config.LOG_LEVEL)
+from app.core.config import settings
+from app.db.postgres import close_db, init_db
+from app.routers import admin, artifacts, auth, chat, health
+from app.utils.logger import create_logger
 
-
+logger = create_logger(__name__, level=settings.log_level)
 security = HTTPBasic()
 
 
-def verify(credentials: HTTPBasicCredentials = Depends(security)):
-    username = os.getenv("SWAGGER_USERNAME")
-    password = os.getenv("SWAGGER_PASSWORD")
-
-    # If credentials not configured, deny access
+def verify_swagger(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
+    username = settings.swagger_username
+    password = settings.swagger_password
     if not username or not password:
         raise HTTPException(
             status_code=401,
             detail="Swagger auth not configured",
             headers={"WWW-Authenticate": "Basic"},
         )
-
-    correct_username = secrets.compare_digest(credentials.username, username)
-    correct_password = secrets.compare_digest(credentials.password, password)
-
-    if not (correct_username and correct_password):
+    ok_user = secrets.compare_digest(credentials.username, username)
+    ok_pass = secrets.compare_digest(credentials.password, password)
+    if not (ok_user and ok_pass):
         raise HTTPException(
             status_code=401,
             detail="Unauthorized",
@@ -41,14 +37,13 @@ def verify(credentials: HTTPBasicCredentials = Depends(security)):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     logger.info("Application starting up...")
+    await init_db()
     yield
-    # Shutdown
+    await close_db()
     logger.info("Application shutting down...")
 
 
-# Disable default docs in production
 app = FastAPI(
     docs_url=None,
     redoc_url=None,
@@ -59,32 +54,34 @@ app = FastAPI(
 
 
 @app.get("/docs", include_in_schema=False)
-def custom_docs(auth: bool = Depends(verify)):
+def custom_docs(auth: bool = Depends(verify_swagger)):
     return get_swagger_ui_html(openapi_url="/openapi.json", title="Secured API Docs")
 
 
 @app.get("/openapi.json", include_in_schema=False)
-async def get_openapi(auth: bool = Depends(verify)):
+async def get_openapi(auth: bool = Depends(verify_swagger)):
     return app.openapi()
 
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust in production
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include Routers
+@app.get("/")
+async def root():
+    return {
+        "service": "RootAgent API",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 app.include_router(health.router, tags=["Health"])
-app.include_router(chat.router, tags=["Chat"])
-app.include_router(document.router, tags=["Document"])
-app.include_router(auth.router, tags=["Authentication"])
-
-if __name__ == "__main__":
-    import uvicorn
-
-    logger.info("Starting Uvicorn server...")
-    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
+app.include_router(auth.router)
+app.include_router(chat.router)
+app.include_router(artifacts.router)
+app.include_router(admin.router)

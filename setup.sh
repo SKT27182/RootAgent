@@ -119,7 +119,7 @@ main() {
     echo "Next steps:"
     echo "  1. Edit .env and add your LLM_API_KEY"
     echo "  2. Run 'make dev' to start development server"
-    echo "  3. Open http://localhost:8000 (backend API)"
+    echo "  3. Open http://localhost:8890 (backend API) and http://localhost:5145 (frontend)"
     echo "  4. Run 'make dev-frontend' in another terminal for frontend"
     echo ""
     echo "Or use Docker:"

@@ -3,20 +3,20 @@ from typing import Any, Dict, Optional, Union, Type
 import litellm
 from litellm import acompletion
 from pydantic import BaseModel
-from backend.app.core.config import Config
-from backend.app.utils.logger import create_logger
+from app.core.config import settings
+from app.utils.logger import create_logger
 
-logger = create_logger(__name__, level=Config.LOG_LEVEL)
+logger = create_logger(__name__, level=settings.log_level)
 
 
 class LLMClient:
     def __init__(
         self,
-        model: str = Config.DEFAULT_MODEL,
+        model: str = settings.llm_model,
         api_key: Optional[str] = None,
     ):
         self.model = model
-        self.api_key = api_key or Config.LLM_API_KEY
+        self.api_key = api_key or settings.llm_api_key
 
     async def agenerate(
         self,

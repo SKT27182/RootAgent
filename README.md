@@ -1,246 +1,79 @@
 # RootAgent
 
-An AI-powered chat agent with code execution capabilities, built with FastAPI (backend) and React/Vite (frontend).
+AI coding agent with JSON-step ReAct loop, Postgres auth, MinIO artifacts, and Redis chat history. Aligned with [infra-hub](https://github.com) and [FlexSearch](../FlexSearch) dev patterns.
 
-## Features
+## Prerequisites
 
-- 🤖 **LLM-Powered Agent** - Uses LiteLLM to support multiple providers (OpenAI, Gemini, OpenRouter)
-- 💻 **Code Execution** - Safely executes Python code in containerized sandbox with persistent function definitions
-- 📊 **Chart Generation** - Generate matplotlib plots and visualizations inline
-- 📁 **File Upload** - Upload CSV files and images for analysis
-- 💬 **Modern Chat Interface** - React-based UI with markdown rendering and syntax highlighting
-- 🔐 **Authentication** - JWT-based user authentication
-- 💾 **Persistence** - Redis-backed chat history and session management
-- 🌙 **Dark/Light Mode** - Theme toggle support
-- 🐳 **Docker Ready** - Full containerization with Docker Compose
+1. Start **infra-hub** (`make up` in infra-hub) so `infra-network` exists with Postgres, Redis, and MinIO.
+2. Create database `rootagent` (or let the app create it on startup via `ensure_database_exists`).
+3. Copy `backend/.env.example` → `backend/.env` and align credentials with infra-hub.
 
----
+## Quick start (local)
 
-## Tech Stack
+```bash
+make install          # uv sync + pnpm install
+cp backend/.env.example backend/.env   # edit values
+make db-migrate       # Alembic migrations
+make dev-local        # backend :8890 + frontend :5145
+```
 
-### Frontend
-- **React 19** with TypeScript
-- **Vite** for fast development and building
-- **Tailwind CSS** for styling
-- **Radix UI** for accessible components
-- **React Markdown** with GFM support
+- Backend API: http://localhost:8890/health  
+- Frontend (Vite): http://localhost:5145 — proxies `/auth`, `/chat`, `/artifacts` to the API  
+- Infra-hub admins: log in with your **main_db** credentials (same email/password as infra-hub)
 
-### Backend
-- **FastAPI** with async support
-- **LiteLLM** for LLM provider abstraction
-- **Redis** for session and chat history storage
-- **JWT** authentication with bcrypt
+## Docker (app only)
 
----
+```bash
+# infra-hub must be running first
+make dev              # docker compose up on infra-network
+```
+
+Compose exposes backend `127.0.0.1:8890` and frontend `127.0.0.1:5145`. Route `/auth`, `/chat`, `/artifacts`, `/health` through your **centralized reverse proxy** to the backend; the frontend container serves static files only (no API proxy).
 
 ## Architecture
 
-### System Overview
-
 ```
-                         Internet
-                             │
-                             ▼
-                   ┌─────────────────┐
-                   │     Nginx       │ Port 80/443 (public)
-                   │    Frontend     │
-                   └────────┬────────┘
-                            │
-         ┌──────────────────┼──────────────────┐
-         │                  │                  │
-         ▼                  ▼                  ▼
-    Static Files       API Routes         WebSocket
-    /, *.css, *.js     /health, /auth/*   /chat/ws
-         │                  │                  │
-         ▼                  └────────┬─────────┘
-    Served directly                  │
-    from Nginx                       ▼
-                            ┌─────────────────┐
-                            │     Backend     │ Port 8000 (internal)
-                            │     FastAPI     │
-                            └────────┬────────┘
-                                     │
-                                     ▼
-                            ┌─────────────────┐
-                            │      Redis      │ Port 9980 (internal)
-                            │  Sessions/Cache │
-                            └─────────────────┘
+Central reverse proxy
+        │
+        ├──► rootagent-frontend (static)
+        └──► rootagent-backend (FastAPI)
+                    ├── Postgres (rootagent DB) — users, chats, artifacts metadata
+                    ├── Redis — chat message history only
+                    └── MinIO — artifact binaries
 ```
 
-### Docker Network Communication
+### Key behavior changes
 
-| Service | Internal Hostname | Port | External Access |
-|---------|-------------------|------|-----------------|
-| Frontend (Nginx) | `frontend` | 80/443 | ✅ Exposed |
-| Backend (FastAPI) | `backend` | 8000 | ❌ Internal only |
-| Redis | `redis` | 9980 | ❌ Internal only |
+- **Auth:** PostgreSQL + JWT (email login); no Redis auth.
+- **Artifacts:** Upload/list/preview/download/delete per chat via `/artifacts/{session_id}`.
+- **Agent:** Structured JSON steps (`thinking`, `code`, `final_answer`, `is_final_answer`); no cross-turn function/import memory in Redis.
+- **Admin hierarchy:** `INFRA_ADMIN` (any user in infra-hub `main_db.users`) → `ADMIN` (RootAgent-only, promoted by infra admins) → `USER`. Infra details stay in `main_db`; RootAgent stores only a link (`infra_hub_user_id`) plus RootAgent-local users.
 
----
+## Makefile targets
 
-## Quick Start
+| Command | Description |
+|---------|-------------|
+| `make install` | Backend `uv sync` + frontend `pnpm install` |
+| `make dev-local` | Run backend + frontend locally with log files |
+| `make dev` / `make up` | Docker compose on `infra-network` |
+| `make down` | Stop containers and local processes |
+| `make db-migrate` | `alembic upgrade head` |
+| `make db-shell` | `psql` into infra-postgres / `rootagent` |
+| `make test` | Backend pytest |
 
-### 1. Clone and Setup
+## Migration note
 
-```bash
-git clone <repo-url>
-cd RootAgent
+Redis-backed users from the legacy stack are **not** migrated. Re-register locally or sign in with an infra-hub admin account from `main_db.users`.
 
-# Run setup script (creates venv, installs deps, generates JWT secret)
-./setup.sh
-```
-
-### 2. Configure Environment
-
-Copy `.env.example` to `.env` and configure:
-
-```env
-LLM_API_KEY=your-api-key-here
-LLM_MODEL=gemini/gemini-1.5-flash
-```
-
-### 3. Run
-
-**Option A: Docker (Recommended)**
-```bash
-make up-build          # Build and start in background
-make up-build-debug    # Build and start in foreground (with logs)
-```
-
-**Option B: Local Development**
-```bash
-make dev               # Backend + Redis
-cd frontend && npm run dev  # Frontend (in another terminal)
-```
-
-### 4. Access
-
-- **Frontend**: http://localhost (Docker) or http://localhost:5173 (local dev)
-- **API Docs**: http://localhost/docs (requires authentication)
-
----
-
-## Project Structure
+## Project layout
 
 ```
 RootAgent/
-├── backend/
+├── backend/           # Python package (uv, FastAPI, Alembic)
 │   ├── app/
-│   │   ├── agent/          # LLM agent logic, tools, prompts
-│   │   ├── core/           # Config
-│   │   ├── models/         # Pydantic schemas
-│   │   ├── routers/        # API endpoints (chat, auth, health)
-│   │   ├── services/       # Redis store, Auth service
-│   │   ├── utils/          # Logger, message formatters
-│   │   └── main.py         # FastAPI app
-│   ├── tests/
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/     # UI components (Radix-based)
-│   │   ├── pages/          # Chat, Login pages
-│   │   ├── lib/            # Auth context, utilities
-│   │   └── App.tsx         # Main app with routing
-│   ├── nginx/              # Nginx configuration
-│   └── Dockerfile
-├── docker-compose.yml
-├── Makefile
-└── setup.sh
+│   ├── alembic/
+│   └── pyproject.toml
+├── frontend/          # Vite + React
+├── docker-compose.yml # backend + frontend on infra-network
+└── Makefile
 ```
-
----
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LLM_API_KEY` | API key for LLM provider | *required* |
-| `LLM_MODEL` | Model name (LiteLLM format) | `gemini/gemini-1.5-flash` |
-| `JWT_SECRET_KEY` | Secret for JWT signing | *auto-generated* |
-| `JWT_EXPIRATION_HOURS` | Token validity | `24` |
-| `REDIS_HOST` | Redis server host | `redis` |
-| `REDIS_PORT` | Redis server port | `9980` |
-| `LOG_LEVEL` | Logging level | `INFO` |
-
----
-
-## Makefile Commands
-
-```bash
-make help              # Show all commands
-
-# Docker
-make up-build          # Build and start all services
-make up-build-debug    # Build and start with logs (foreground)
-make down              # Stop all services
-make logs              # View logs
-make ps                # Show running containers
-
-# Local Development
-make install           # Install dependencies
-make dev               # Run backend + Redis
-make dev-frontend      # Serve frontend
-make dev-stop          # Stop local services
-
-# Testing
-make test              # Run tests
-make test-cov          # Run with coverage
-```
-
----
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/auth/register` | POST | Register new user |
-| `/auth/login` | POST | Login, get JWT |
-| `/auth/me` | GET | Get current user |
-| `/chat/sessions/{user_id}` | GET | List user sessions |
-| `/chat/history/{user_id}/{session_id}` | GET | Get session history |
-| `/chat/sessions/{user_id}/{session_id}` | DELETE | Delete session |
-| `/chat/ws` | WebSocket | Chat WebSocket |
-| `/document/` | POST | Upload document |
-
----
-
-## Features in Detail
-
-### File Uploads
-- **CSV Files**: Upload CSV data for analysis. The agent can read and process the data.
-- **Images**: Upload images for vision-capable models to analyze.
-
-### Code Execution
-- Python code runs in an isolated environment
-- Persistent function definitions across messages
-- Support for data visualization with matplotlib
-
-### Agent Tools
-- `figure_to_base64`: Convert matplotlib figures to inline images
-- `web_search`: Search the web for current information (via Tavily)
-
----
-
-## Production Deployment
-
-### Docker Compose
-
-```bash
-# Build and run in background
-make up-build
-
-# View logs
-make logs
-```
-
-### Security Notes
-
-- Change default JWT secret in production
-- Use HTTPS (configure SSL in nginx)
-- Set proper CORS origins
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE)

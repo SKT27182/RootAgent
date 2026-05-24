@@ -1,13 +1,12 @@
 from typing import Any, Dict, List
 import ast
 import textwrap
-from backend.app.utils.local_python_executor import LocalPythonExecutor
+from app.agent.constants import AUTHORIZED_IMPORTS
+from app.core.config import settings
+from app.utils.local_python_executor import LocalPythonExecutor
+from app.utils.logger import create_logger
 
-from backend.app.agent.constants import AUTHORIZED_IMPORTS
-from backend.app.core.config import Config
-from backend.app.utils.logger import create_logger
-
-logger = create_logger(__name__, level=Config.LOG_LEVEL)
+logger = create_logger(__name__, level=settings.log_level)
 
 
 class FinalAnswerException(Exception):
@@ -57,9 +56,10 @@ def extract_definitions(code_str: str) -> tuple[Dict[str, str], List[str]]:
 
 
 class CodeExecutor:
-    def __init__(self, additional_functions: Dict[str, Any] = {}):
-        self.defined_functions = {}  # Track functions defined across executions
-        self.defined_imports = set()  # Track imports defined across executions
+    def __init__(self, additional_functions: Dict[str, Any] | None = None):
+        additional_functions = additional_functions or {}
+        self.defined_functions: Dict[str, str] = {}
+        self.defined_imports: set[str] = set()
 
         # Standard built-ins to allow
         builtins = {
@@ -149,3 +149,8 @@ class CodeExecutor:
 
             logger.error(f"Execution Error: {str(e)}")
             raise e
+
+    def reset(self) -> None:
+        """Reset tracked definitions (fresh executor state)."""
+        self.defined_functions = {}
+        self.defined_imports = set()

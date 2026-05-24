@@ -1,27 +1,21 @@
 import json
-import os
 import traceback
-from typing import List, Optional, Callable, Dict, Set, Tuple, Any
-import inspect
-from backend.app.agent.llm import LLMClient
-from backend.app.models.chat import Message
-from backend.app.agent.constants import (
-    AUTHORIZED_IMPORTS,
-    CODE_BLOCK_OPENING_TAG,
-    CODE_BLOCK_CLOSING_TAG,
-)
-from backend.app.agent.executor import CodeExecutor, FinalAnswerException
-from backend.app.agent.prompts import SYSTEM_PROMPT_TEMPLATE
-from backend.app.core.config import Config
-from backend.app.utils.logger import create_logger
-from backend.app.models.agent import AgentStep
-from jinja2 import Template
-import re
 import uuid
-import ast
-from backend.app.utils.local_python_executor import check_import_authorized
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-logger = create_logger(__name__, level=Config.LOG_LEVEL)
+import inspect
+from jinja2 import Template
+
+from app.agent.constants import AUTHORIZED_IMPORTS
+from app.agent.executor import CodeExecutor, FinalAnswerException
+from app.agent.llm import LLMClient
+from app.agent.prompts import SYSTEM_PROMPT_TEMPLATE
+from app.core.config import settings
+from app.models.agent import AgentStep
+from app.models.chat import Message
+from app.utils.logger import create_logger
+
+logger = create_logger(__name__, level=settings.log_level)
 
 
 class FunctionTool:
@@ -32,294 +26,123 @@ class FunctionTool:
         self.signature = inspect.signature(func)
 
     def to_code_prompt(self) -> str:
-        """
-        Generates a string representation of the function for the prompt.
-        Format:
-        def function_name(args) -> return_type:
-            \"\"\"
-            docstring
-            \"\"\"
-        """
-        # Get source code of the signature line
-        try:
-            # This is a bit tricky, inspect.getsource might return the whole function.
-            # We construct it from signature
-            sig_str = str(self.signature)
-            # Add type hints if available? They are in signature.
-
-        except Exception:
-            sig_str = "(...)"
-
-        return f'def {self.name}{sig_str}:\n    """\n    {self.docstring.strip()}\n    """\n'
+        sig_str = str(self.signature)
+        doc = self.docstring.strip()
+        return f"def {self.name}{sig_str}:\n    \"\"\"{doc}\"\"\"\n"
 
 
 class Agent:
     def __init__(
         self,
-        model_name: str = Config.DEFAULT_MODEL,
-        api_key: Optional[str] = Config.LLM_API_KEY,
-        additional_functions: Optional[Dict[str, Callable]] = {},
-        previous_functions: Dict[str, str] = {},
-        previous_imports: Set[str] = set(),
+        model_name: str = settings.llm_model,
+        api_key: Optional[str] = settings.llm_api_key or None,
+        additional_functions: Optional[Dict[str, Callable]] = None,
+        executor: Optional[CodeExecutor] = None,
     ):
         self.llm = LLMClient(model=model_name, api_key=api_key)
-
-        self.executor = CodeExecutor(additional_functions=additional_functions)
-
-        injected_code = ""
-
-        # Inject imports
-        if previous_imports:
-            injected_code += "\n".join(previous_imports) + "\n\n"
-
-        logger.debug(
-            f"Injected imports: {list(previous_imports)}"
-            if previous_imports
-            else "No previous imports to inject"
+        self.executor = executor or CodeExecutor(
+            additional_functions=additional_functions or {}
         )
-
-        # Inject functions
-        for func_name, func_source in previous_functions.items():
-            injected_code += func_source + "\n\n"
-
-        self.executor.execute(injected_code)
-        logger.debug(
-            f"Injected functions: {list(previous_functions.keys())}"
-            if previous_functions
-            else "No previous functions to inject"
-        )
-
-        self.executor.defined_functions.update(previous_functions)
-        self.executor.defined_imports.update(previous_imports)
-
-        self.buffer = []  # Document history
         self.max_steps = 15
-
-        self.tools = {}
-
-        # Tools standard (passed in init from server code)
+        self.tools: Dict[str, FunctionTool] = {}
         if additional_functions:
             for name, func in additional_functions.items():
                 self.tools[name] = FunctionTool(func)
-
-    def get_all_defined_functions(self) -> Tuple[Set[str], Dict[str, str]]:
-        """
-        Returns all functions defined during the session (previous + new).
-        Filters imports to only include authorized ones.
-        """
-        valid_imports = set()
-
-        for import_stmt in self.executor.defined_imports:
-            try:
-                tree = ast.parse(import_stmt)
-                is_valid = True
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            if not check_import_authorized(
-                                alias.name, AUTHORIZED_IMPORTS
-                            ):
-                                is_valid = False
-                                break
-                    elif isinstance(node, ast.ImportFrom):
-                        # node.module can be None for relative imports like 'from . import x'
-                        # We assume user code uses absolute imports for libraries
-                        if node.module and not check_import_authorized(
-                            node.module, AUTHORIZED_IMPORTS
-                        ):
-                            is_valid = False
-                            break
-                    if not is_valid:
-                        break
-
-                if is_valid:
-                    valid_imports.add(import_stmt)
-            except Exception as e:
-                logger.warning(
-                    f"Could not parse or validate import '{import_stmt}': {e}"
-                )
-
-        return valid_imports, self.executor.defined_functions
 
     def _initialize_messages(
         self,
         query: Optional[str] = None,
         history: List[Message] = [],
         images: Optional[List[str]] = None,
-        csv_data: Optional[str] = None,
+        artifact_context: Optional[str] = None,
     ) -> List[dict]:
-        """Initialize the conversation messages."""
-        authorized_imports = str(AUTHORIZED_IMPORTS)
-        # Render system prompt
         template = Template(SYSTEM_PROMPT_TEMPLATE)
         system_prompt = template.render(
-            authorized_imports=authorized_imports,
+            authorized_imports=str(AUTHORIZED_IMPORTS),
             tools=self.tools,
-            self_defined_functions=self.executor.defined_functions,
-            managed_agents={},
-            code_block_opening_tag=CODE_BLOCK_OPENING_TAG,
-            code_block_closing_tag=CODE_BLOCK_CLOSING_TAG,
         )
+        messages: List[dict] = [{"role": "system", "content": system_prompt}]
 
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # Add history
         for msg in history:
             content = msg.content
-            # Check if content is a list of dicts serialized as JSON string
             if content.strip().startswith("[") and (
                 "type" in content or "text" in content
             ):
                 try:
                     content = json.loads(content)
                 except json.JSONDecodeError:
-                    pass  # Keep as string if parsing fails
-
+                    pass
             messages.append({"role": msg.role, "content": content})
 
-        # If query is provided, format it as a new user message (legacy/direct call support)
-        # If query is None, we assume the latest message in history is the user's input.
         if query:
-            user_content = [{"type": "text", "text": query}]
-
+            user_content: List[dict] = [{"type": "text", "text": query}]
+            if artifact_context:
+                user_content.append({"type": "text", "text": artifact_context})
             if images:
                 for img_str in images:
-                    if not img_str.startswith("data:image"):
-                        url = f"data:image/jpeg;base64,{img_str}"
-                    else:
-                        url = img_str
-
+                    url = (
+                        img_str
+                        if img_str.startswith("data:image")
+                        else f"data:image/jpeg;base64,{img_str}"
+                    )
                     user_content.append(
                         {"type": "image_url", "image_url": {"url": url}}
                     )
-
-            if csv_data:
-                import tempfile
-
-                filename = f"data_{uuid.uuid4().hex[:8]}.csv"
-                filepath = os.path.join(tempfile.gettempdir(), filename)
-                with open(filepath, "w") as f:
-                    f.write(csv_data)
-
-                user_content.append(
-                    {
-                        "type": "text",
-                        "text": f"\n\nI have provided a CSV file at '{filepath}' containing the data. You can write code to read and analyze it.",
-                    }
-                )
-
             messages.append({"role": "user", "content": user_content})
 
         return messages
 
-    async def _generate_step(self, messages: List[dict], **kwargs) -> str:
-        """Call LLM and return raw string response."""
-        logger.debug(f"Calling LLM with messages: {json.dumps(messages, default=str)}")
+    async def _generate_step(self, messages: List[dict], **kwargs) -> AgentStep:
+        response = await self.llm.agenerate(messages, schema=AgentStep, **kwargs)
+        if isinstance(response, AgentStep):
+            return response
+        return AgentStep.model_validate(response)
 
-        response = await self.llm.agenerate(
-            messages, schema=None, **kwargs  # Disable JSON schema enforcement
-        )
-
-        return str(response)
-
-    def _parse_step(self, response_text: str) -> AgentStep:
-        """
-        Parse the text response to extract Thought and Code.
-        Returns an AgentStep object.
-        """
-        logger.info(f"Full LLM Response: {response_text}")
-        # Look for code block
-        code_pattern = re.compile(r"```python(.*?)```", re.DOTALL)
-        code_match = code_pattern.search(response_text)
-
-        thought = ""
-        code = None
-
-        if code_match:
-            code = code_match.group(1).strip()
-            # Everything before code block is thought (loosely)
-            thought = response_text[: code_match.start()].strip()
-        else:
-            thought = response_text.strip()
-
-        return AgentStep(thought=thought, code=code)
+    def _format_step_for_history(self, step: AgentStep) -> str:
+        return step.model_dump_json()
 
     async def run(
         self,
         query: Optional[str] = None,
         images: Optional[List[str]] = None,
-        csv_data: Optional[str] = None,
         history: List[Message] = [],
+        artifact_context: Optional[str] = None,
         **kwargs,
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """
-        Main ReAct loop.
-        Returns:
-            final_answer: str
-            steps: List[Dict[str, Any]] - list of raw messages generated during the loop
-        """
-        logger.debug(f"Query: {query}")
-
-        messages = self._initialize_messages(query, history, images, csv_data)
-
-        # Track where the new steps start
+        messages = self._initialize_messages(
+            query, history, images, artifact_context
+        )
         initial_message_count = len(messages)
-
         step_count = 0
+
         while step_count < self.max_steps:
             try:
-                # 1. Generate Step (Raw Text)
-                llm_response = await self._generate_step(messages, **kwargs)
-                logger.debug(f"LLM Response: {llm_response}")
+                step = await self._generate_step(messages, **kwargs)
+                step_json = self._format_step_for_history(step)
+                messages.append({"role": "assistant", "content": step_json})
 
-                # Append assistant message
-                messages.append({"role": "assistant", "content": llm_response})
+                if step.is_final_answer:
+                    answer = step.final_answer or step.thinking
+                    return answer, messages[initial_message_count:]
 
-                # 2. Parse Step
-                step_data = self._parse_step(llm_response)
-                logger.info(f"--- Step {step_count} ---")
-                if step_data.thought:
-                    logger.debug(f"Thought: {step_data.thought}")
-
-                # 3. Handle Code Execution
-                if step_data.code:
-                    logger.debug(f"Executing Code Block:\n{step_data.code}")
-                    observation = self.executor.execute(step_data.code)
-                    obs_msg = f"Observation: {observation}"
-
-                    logger.info(obs_msg)
-
-                    # Check if it returned a FinalAnswerException
+                if step.code:
+                    observation = self.executor.execute(step.code)
                     if isinstance(observation, FinalAnswerException):
-                        logger.debug(f"Properly final_answer called")
                         return str(observation.answer), messages[initial_message_count:]
-
-                    # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
-                    obs_msg += "\n\n"
-                    obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
+                    obs_msg = f"Observation: {observation}"
                     messages.append({"role": "user", "content": obs_msg})
-
                 else:
-                    # Fallback: if no code was found, strictly prompt for it.
-                    logger.warning("No code block found in LLM response.")
                     messages.append(
                         {
                             "role": "user",
-                            "content": f"Error: You did not provide any code block. Always give your final answer using final_answer('...') inside a code block.",
+                            "content": "Error: Provide code or set is_final_answer true with final_answer.",
                         }
                     )
 
                 step_count += 1
-
             except Exception as e:
-                logger.error(f"Error in step {step_count}: {traceback.format_exc()}")
-                error_msg = f"system error: {str(e)}"
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": error_msg,
-                    }
-                )
+                logger.error(traceback.format_exc())
+                messages.append({"role": "user", "content": f"system error: {e}"})
                 step_count += 1
 
         return (
@@ -331,96 +154,63 @@ class Agent:
         self,
         query: Optional[str] = None,
         images: Optional[List[str]] = None,
-        csv_data: Optional[str] = None,
         history: List[Message] = [],
+        artifact_context: Optional[str] = None,
         **kwargs,
     ):
-        """
-        Streamed ReAct loop.
-        Yields:
-            Dict: {"type": "token", "content": "..."}
-            Dict: {"type": "tool_output", "content": "..."}
-            Dict: {"type": "error", "content": "..."}
-            Dict: {"type": "final", "content": "..."}
-        """
-        logger.debug(f"Streaming Query: {query}")
-
-        messages = self._initialize_messages(query, history, images, csv_data)
-
+        messages = self._initialize_messages(
+            query, history, images, artifact_context
+        )
         step_count = 0
+
         while step_count < self.max_steps:
             try:
-                # 1. Generate Step (Streamed)
-                llm_response = ""
-                async for token in self.llm.astream(messages, schema=None, **kwargs):
-                    llm_response += token
-                    yield {"type": "token", "content": token}
+                step = await self._generate_step(messages, **kwargs)
+                step_json = self._format_step_for_history(step)
+                messages.append({"role": "assistant", "content": step_json})
 
-                logger.debug(f"LLM Response (Streamed): {llm_response}")
+                if step.is_final_answer:
+                    yield {"type": "step", "step": step.model_dump()}
+                    return
 
-                # Append assistant message
-                messages.append({"role": "assistant", "content": llm_response})
-
-                # 2. Parse Step
-                step_data = self._parse_step(llm_response)
-                logger.info(f"--- Step {step_count} ---")
-                if step_data.thought:
-                    logger.info(f"Thought: {step_data.thought}")
-
-                # 3. Handle Code Execution
-                if step_data.code:
-                    logger.info(f"Executing Code Block:\n{step_data.code}")
-                    observation = self.executor.execute(step_data.code)
-                    obs_msg = f"Observation: {observation}"
-
-                    logger.info(obs_msg)
-
-                    # Check if execution returned a FinalAnswerException
+                if step.code:
+                    observation = self.executor.execute(step.code)
                     if isinstance(observation, FinalAnswerException):
-                        logger.debug(f"Properly final_answer called")
-                        yield {"type": "final", "content": str(observation.answer)}
-                        return
-
-                    # Add in obs_msg, as no final_answer was called here hence we need to prompt for it
-                    obs_msg += "\n\n"
-                    obs_msg += "Please call final_answer('...') inside a code block to provide the final answer."
-                    messages.append({"role": "user", "content": obs_msg})
-                    yield {"type": "observation", "content": obs_msg}
-
-                else:
-                    # Fallback: if no code was found
-                    logger.warning("No code block found in LLM response.")
-                    error_msg = f"Error: You did not provide any code block. Always give your final answer using final_answer('...') inside a code block."
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": error_msg,
+                        final_step = AgentStep(
+                            thinking=step.thinking,
+                            code=step.code,
+                            final_answer=str(observation.answer),
+                            is_final_answer=True,
+                        )
+                        messages[-1] = {
+                            "role": "assistant",
+                            "content": final_step.model_dump_json(),
                         }
-                    )
-                    yield {"type": "observation", "content": error_msg}
+                        yield {"type": "step", "step": final_step.model_dump()}
+                        return
+                    obs_msg = f"Observation: {observation}"
+                    messages.append({"role": "user", "content": obs_msg})
+                    yield {"type": "step", "step": step.model_dump()}
+                    yield {"type": "tool", "content": obs_msg}
+                else:
+                    err = "Error: Provide code or set is_final_answer true with final_answer."
+                    messages.append({"role": "user", "content": err})
+                    yield {"type": "step", "step": step.model_dump()}
+                    yield {"type": "tool", "content": err}
 
                 step_count += 1
-
-                # Yield separator for next loop
-                if step_count < self.max_steps:
-                    yield {"type": "step_separator", "content": ""}
 
             except Exception as e:
-                logger.error(f"Error in step {step_count}: {traceback.format_exc()}")
-                error_msg = f"system error: {str(e)}"
-                yield {"type": "error", "content": error_msg}
-                yield {"type": "step_separator", "content": ""}
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": error_msg,
-                    }
-                )
+                logger.error(traceback.format_exc())
+                yield {"type": "tool", "content": str(e)}
+                messages.append({"role": "user", "content": str(e)})
                 step_count += 1
 
-        # If loop finishes without final answer
         yield {
-            "type": "final",
-            "content": "Agent reached maximum steps without a final answer.",
+            "type": "step",
+            "step": AgentStep(
+                thinking="",
+                final_answer="Agent reached maximum steps without a final answer.",
+                is_final_answer=True,
+            ).model_dump(),
         }
-        return

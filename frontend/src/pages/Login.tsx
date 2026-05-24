@@ -6,12 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api } from "@/api";
+import { login as apiLogin, register as apiRegister, getMe } from "@/api";
 
 export default function Login() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -20,13 +19,19 @@ export default function Login() {
     e.preventDefault();
     setError("");
     try {
-      const response = await api.post("/auth/login", { username, password });
-      const { access_token, user_id, username: uName } = response.data;
-      // We don't get email back on login, but we can fetch me or just mock for now logic
-      login(access_token, { user_id, username: uName, email: "" });
+      const response = await apiLogin(email, password);
+      const { access_token } = response.data;
+      login(access_token);
+      const me = await getMe();
+      login(access_token, me.data);
       navigate("/");
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Login failed");
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data
+              ?.detail
+          : undefined;
+      setError(detail || "Login failed");
     }
   };
 
@@ -34,12 +39,19 @@ export default function Login() {
     e.preventDefault();
     setError("");
     try {
-      const response = await api.post("/auth/register", { username, email, password });
-      const { access_token, user_id, username: uName } = response.data;
-      login(access_token, { user_id, username: uName, email });
+      await apiRegister(email, password);
+      const response = await apiLogin(email, password);
+      const { access_token } = response.data;
+      const me = await getMe();
+      login(access_token, me.data);
       navigate("/");
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Registration failed");
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data
+              ?.detail
+          : undefined;
+      setError(detail || "Registration failed");
     }
   };
 
@@ -59,33 +71,57 @@ export default function Login() {
             <TabsContent value="login">
               <form onSubmit={handleLogin} className="space-y-4 pt-4">
                 <div className="space-y-2">
-                  <Label htmlFor="username">Username</Label>
-                  <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
-                  <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                  <Input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit" className="w-full">Login</Button>
+                <Button type="submit" className="w-full">
+                  Login
+                </Button>
               </form>
             </TabsContent>
             <TabsContent value="register">
               <form onSubmit={handleRegister} className="space-y-4 pt-4">
                 <div className="space-y-2">
-                  <Label htmlFor="reg-username">Username</Label>
-                  <Input id="reg-username" value={username} onChange={(e) => setUsername(e.target.value)} required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                  <Label htmlFor="reg-email">Email</Label>
+                  <Input
+                    id="reg-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="reg-password">Password</Label>
-                  <Input id="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                  <Input
+                    id="reg-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit" className="w-full">Register</Button>
+                <Button type="submit" className="w-full">
+                  Register
+                </Button>
               </form>
             </TabsContent>
           </Tabs>

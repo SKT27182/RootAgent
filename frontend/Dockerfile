@@ -1,34 +1,14 @@
-# Stage 1: Build the React application
-FROM node:20-alpine as build
-
+# --- Stage 1: Build ---
+FROM node:20-alpine AS builder
+RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
-
-# Copy package.json and package-lock.json
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci
-
-# Copy the rest of the application code
+COPY package.json pnpm-lock.yaml* package-lock.json* ./
+RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else npm ci; fi
 COPY . .
+RUN if [ -f pnpm-lock.yaml ]; then pnpm run build; else npm run build; fi
 
-# Build the application
-RUN npm run build
-
-# Stage 2: Serve the application with Nginx
+# --- Stage 2: Serve static only (API via centralized reverse proxy) ---
 FROM nginx:alpine
-
-# Copy the build output from the previous stage to the Nginx html directory
-COPY --from=build /app/dist /usr/share/nginx/html
-
-# Copy custom Nginx configuration
-COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copy SSL certificates
-COPY nginx/certs /etc/nginx/certs
-
-# Expose port 80
+COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80
-
-# Start Nginx
 CMD ["nginx", "-g", "daemon off;"]

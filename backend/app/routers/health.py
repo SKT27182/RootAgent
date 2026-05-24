@@ -1,12 +1,12 @@
 from fastapi import APIRouter
-from backend.app.utils.logger import create_logger
-from backend.app.core.config import Config
 
-router = APIRouter(prefix="/health", tags=["Health"])
-logger = create_logger(__name__, level=Config.LOG_LEVEL)
+from app.core.config import settings
+from app.utils.logger import create_logger
+
+router = APIRouter(tags=["Health"])
+logger = create_logger(__name__, level=settings.log_level)
 
 
-@router.get("/")
+@router.get("/health")
 async def health_check():
-    logger.debug("Health check requested.")
     return {"status": "ok"}

@@ -1,165 +1,157 @@
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
-from typing import List, Optional, Any
-from backend.app.models.chat import Session, Message, ChatRequest, ChatResponse
-from backend.app.services.redis_store import RedisStore
-from backend.app.agent.agent import Agent
-from backend.app.agent.tools import AGENT_TOOLS
-from backend.app.core.config import Config
-from backend.app.utils.logger import create_logger
-from backend.app.utils.utils import format_user_message, format_assistant_message
+import json
 import uuid
 from datetime import datetime, timezone
-import json
 from functools import lru_cache
+from typing import Annotated, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.agent.agent import Agent
+from app.agent.tools import AGENT_TOOLS
+from app.core.config import settings
+from app.core.dependencies import DbSession, get_current_active_user
+from app.db.models import User
+from app.db.postgres import async_session_maker
+from app.models.agent import AgentStep
+from app.models.chat import ChatRequest, ChatResponse, Message
+from app.services import artifact_service
+from app.services.chat_messages import (
+    history_for_agent,
+    message_for_assistant,
+    message_for_tool,
+    message_for_user,
+)
+from app.services.redis_store import RedisStore
+from app.utils.logger import create_logger
+from app.utils.utils import format_user_message
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
-logger = create_logger(__name__, level=Config.LOG_LEVEL)
+logger = create_logger(__name__, level=settings.log_level)
 
 
-# Dependency for Redis Store
 @lru_cache()
-def get_redis_store():
+def get_redis_store() -> RedisStore:
     return RedisStore()
+
+
+def _ensure_user_id(request_user_id: str, current_user: User) -> str:
+    uid = str(current_user.id)
+    if request_user_id != uid:
+        raise HTTPException(status_code=403, detail="User ID mismatch")
+    return uid
+
+
+async def _build_artifact_context(
+    db: AsyncSession,
+    user: User,
+    session_id: str,
+    artifact_ids: Optional[List[str]] = None,
+) -> str:
+    if not artifact_ids:
+        return ""
+    lines = ["Attached artifacts:"]
+    for aid_str in artifact_ids:
+        try:
+            aid = uuid.UUID(aid_str)
+        except ValueError:
+            continue
+        artifact = await artifact_service.get_artifact_for_user(
+            db, user, session_id, aid
+        )
+        if artifact:
+            lines.append(
+                f"- id={artifact.id} file={artifact.filename} "
+                f"type={artifact.content_type} path={artifact.storage_path}"
+            )
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 @router.post("/", response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
-    redis_store: RedisStore = Depends(get_redis_store),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: DbSession,
+    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
 ):
-    """
-    Endpoint for chat interaction.
-    """
+    user_id = _ensure_user_id(request.user_id, current_user)
+    session_id = request.session_id or str(uuid.uuid4())
     query = request.query
-    user_id = request.user_id
-    session_id = request.session_id
-    include_reasoning = request.include_reasoning
-    images = request.images
-    csv_data = request.csv_data
-
-    logger.info(
-        f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning} for query={query}"
-    )
 
     if not query:
-        logger.error("Query missing in request.")
         raise HTTPException(status_code=400, detail="Query is required")
-    if not user_id:
-        logger.error("User ID missing in request.")
-        raise HTTPException(status_code=400, detail="User ID is required")
 
-    # Generate session_id if not provided
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        logger.info(f"Generated new session_id: {session_id}")
-
-    # Create User Message
-    # Format message content using helper
-    formatted_content = format_user_message(query, images, csv_data)
-
-    user_message = Message(
-        role="user",
-        content=json.dumps(formatted_content),
-        timestamp=datetime.now(timezone.utc),
-    )
-
-    # Save User Message to Redis
+    formatted_content = format_user_message(query, request.images, request.csv_data)
+    user_message = message_for_user(json.dumps(formatted_content))
     await redis_store.save_message(user_id, session_id, user_message)
-
-    # Track session for user
     await redis_store.add_user_session(user_id, session_id)
 
     try:
-        # Run Agent
-        logger.debug(f"Running agent for session {session_id}")
-
-        # Get history to pass to agent
-        history = await redis_store.get_session_history(
-            user_id, session_id, include_reasoning=include_reasoning
+        history = history_for_agent(
+            await redis_store.get_session_history(
+                user_id, session_id, include_reasoning=True
+            )
         )
-        logger.debug(f"Retrieved history: {history}")
-        logger.info(f"Retrieved {len(history)} messages from session {session_id}")
-        # Get persistent functions
-        previous_functions = await redis_store.get_functions(user_id, session_id)
-        previous_imports = await redis_store.get_imports(user_id, session_id)
-        logger.debug(
-            f"Retrieved {len(previous_functions)} functions and {len(previous_imports)} imports from session {session_id}"
-        )
-        logger.debug(f"Previous functions: {previous_functions}")
-        logger.debug(f"Previous imports: {previous_imports}")
-
-        # Create ephemeral agent (state restored from Redis)
-        agent = Agent(
-            additional_functions=AGENT_TOOLS,
-            previous_functions=previous_functions,
-            previous_imports=previous_imports,
+        artifact_context = await _build_artifact_context(
+            db, current_user, session_id, request.artifact_ids
         )
 
+        agent = Agent(additional_functions=AGENT_TOOLS)
         response_text, generated_steps = await agent.run(
-            query=None,  # Query is already in history
-            images=None,  # Images are already in history
+            query=None,
             history=history,
+            artifact_context=artifact_context or None,
         )
 
-        # Save defined functions
         try:
-            current_imports, current_functions = agent.get_all_defined_functions()
-            await redis_store.save_functions(user_id, session_id, current_functions)
-            await redis_store.save_imports(user_id, session_id, current_imports)
-            logger.debug(f"Current functions: {current_functions}")
-        except Exception as ex:
-            logger.warning(f"Failed to save functions: {ex}")
+            await artifact_service.save_generated_images_from_text(
+                db, current_user, session_id, response_text
+            )
+        except Exception as gen_err:
+            logger.warning(f"Could not persist generated images: {gen_err}")
 
-        # Save Reasoning Steps
+        last_assistant: Message | None = None
         for step_msg in generated_steps:
-            # Ensure content is string
+            role = step_msg.get("role", "assistant")
             content_str = step_msg.get("content", "")
             if not isinstance(content_str, str):
                 content_str = json.dumps(content_str)
 
-            reasoning_message = Message(
-                role=step_msg.get("role", "assistant"),
-                content=content_str,
-                timestamp=datetime.now(timezone.utc),
-                is_reasoning=True,
-            )
-            await redis_store.save_message(user_id, session_id, reasoning_message)
+            if role == "assistant":
+                step = AgentStep.model_validate_json(content_str)
+                stored = message_for_assistant(step)
+                await redis_store.save_message(user_id, session_id, stored)
+                last_assistant = stored
+            elif role == "user":
+                await redis_store.save_message(
+                    user_id, session_id, message_for_tool(content_str)
+                )
 
-        # Create Assistant Message (Final Answer)
-        # Format the response to extract any base64 images into structured format
-        formatted_response = format_assistant_message(response_text)
-        assistant_message = Message(
-            role="assistant",
-            content=json.dumps(formatted_response),
-            timestamp=datetime.now(timezone.utc),
-            is_reasoning=False,
-        )
+        if last_assistant is None:
+            raise HTTPException(status_code=500, detail="Agent produced no response")
 
-        # Save Assistant Message to Redis
-        await redis_store.save_message(user_id, session_id, assistant_message)
-
-        logger.info(f"Chat response sent for session {session_id}")
         return ChatResponse(
             response=response_text,
             session_id=session_id,
-            message_id=assistant_message.message_id,
+            message_id=last_assistant.message_id,
         )
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in chat endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/history/{user_id}/{session_id}", response_model=List[Message])
 async def get_history(
     user_id: str,
     session_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
     include_reasoning: bool = False,
-    redis_store: RedisStore = Depends(get_redis_store),
 ):
-    logger.info(
-        f"Fetching history for user={user_id}, session={session_id}, include_reasoning={include_reasoning}"
-    )
+    _ensure_user_id(user_id, current_user)
     return await redis_store.get_session_history(
         user_id, session_id, include_reasoning=include_reasoning, last_n=-1
     )
@@ -168,9 +160,10 @@ async def get_history(
 @router.get("/sessions/{user_id}", response_model=List[str])
 async def get_sessions(
     user_id: str,
-    redis_store: RedisStore = Depends(get_redis_store),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
 ):
-    logger.info(f"Fetching sessions for user={user_id}")
+    _ensure_user_id(user_id, current_user)
     return await redis_store.get_user_sessions(user_id)
 
 
@@ -178,10 +171,10 @@ async def get_sessions(
 async def delete_session(
     user_id: str,
     session_id: str,
-    redis_store: RedisStore = Depends(get_redis_store),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
 ):
-    """Delete a session and all its messages, functions, and imports."""
-    logger.info(f"Deleting session={session_id} for user={user_id}")
+    _ensure_user_id(user_id, current_user)
     deleted = await redis_store.delete_session(user_id, session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -193,12 +186,10 @@ async def delete_message(
     user_id: str,
     session_id: str,
     message_id: str,
-    redis_store: RedisStore = Depends(get_redis_store),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
 ):
-    """Delete a specific message from a session."""
-    logger.info(
-        f"Deleting message={message_id} from session={session_id} for user={user_id}"
-    )
+    _ensure_user_id(user_id, current_user)
     deleted = await redis_store.delete_message(user_id, session_id, message_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -208,24 +199,20 @@ async def delete_message(
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    redis_store: RedisStore = Depends(get_redis_store),
+    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
 ):
     await websocket.accept()
     try:
         data = await websocket.receive_text()
         request_data = json.loads(data)
 
-        # Parse ChatRequest manually since it comes as dict
         query = request_data.get("query")
         user_id = request_data.get("user_id")
         session_id = request_data.get("session_id")
         include_reasoning = request_data.get("include_reasoning", True)
         images = request_data.get("images")
         csv_data = request_data.get("csv_data")
-
-        logger.info(
-            f"Chat request received from user={user_id}, session={session_id} with reasoning={include_reasoning} for query={query}"
-        )
+        artifact_ids = request_data.get("artifact_ids")
 
         if not query or not user_id:
             await websocket.send_json(
@@ -243,158 +230,59 @@ async def websocket_endpoint(
                 }
             )
 
-        # Save User Message
         formatted_content = format_user_message(query, images, csv_data)
-        user_message = Message(
-            role="user",
-            content=json.dumps(formatted_content),
-            timestamp=datetime.now(timezone.utc),
-        )
+        user_message = message_for_user(json.dumps(formatted_content))
         await redis_store.add_user_session(user_id, session_id)
         await redis_store.save_message(user_id, session_id, user_message)
 
-        # Retrieve Context
-        history = await redis_store.get_session_history(
-            user_id, session_id, include_reasoning=include_reasoning
-        )
-        logger.debug(f"Retrieved history: {history}")
-        logger.info(f"Retrieved {len(history)-1} messages from session {session_id}")
-        previous_functions = await redis_store.get_functions(user_id, session_id)
-        previous_imports = await redis_store.get_imports(user_id, session_id)
-
-        # Create ephemeral agent (state restored from Redis)
-        agent = Agent(
-            additional_functions=AGENT_TOOLS,
-            previous_functions=previous_functions,
-            previous_imports=previous_imports,
+        history = history_for_agent(
+            await redis_store.get_session_history(
+                user_id, session_id, include_reasoning=include_reasoning
+            )
         )
 
-        # Stream Execution
+        artifact_context = ""
+        if artifact_ids:
+            artifact_context = f"Artifact IDs for this chat: {', '.join(artifact_ids)}"
+
+        agent = Agent(additional_functions=AGENT_TOOLS)
         final_answer = ""
-        current_step_content = ""
 
         async for event in agent.run_stream(
             query=None,
-            images=None,
             history=history,
+            artifact_context=artifact_context or None,
         ):
             await websocket.send_json(event)
 
-            # Accumulate tokens to reconstruct messages for persistence
-            if event["type"] == "token":
-                current_step_content += event["content"]
-            elif event["type"] == "observation":
-                # An observation came - save the accumulated LLM reasoning first as assistant
-                if current_step_content.strip():
-                    reasoning_message = Message(
-                        role="assistant",
-                        content=current_step_content,
-                        timestamp=datetime.now(timezone.utc),
-                        is_reasoning=True,
-                    )
-                    await redis_store.save_message(
-                        user_id, session_id, reasoning_message
-                    )
-                    logger.debug(
-                        f"Saved reasoning step: {current_step_content[:100]}..."
-                    )
-                    current_step_content = ""  # Reset
-
-                # Save observation as user message (code output)
-                observation_message = Message(
-                    role="user",
-                    content=event["content"],
-                    timestamp=datetime.now(timezone.utc),
-                    is_reasoning=True,
+            if event["type"] == "step":
+                step = AgentStep.model_validate(event["step"])
+                await redis_store.save_message(
+                    user_id, session_id, message_for_assistant(step)
                 )
-                await redis_store.save_message(user_id, session_id, observation_message)
-                logger.debug(f"Saved observation: {event['content'][:100]}...")
-            elif event["type"] == "step_separator":
-                # A step ended - save any remaining accumulated content as reasoning
-                if current_step_content.strip():
-                    reasoning_message = Message(
-                        role="assistant",
-                        content=current_step_content,
-                        timestamp=datetime.now(timezone.utc),
-                        is_reasoning=True,
-                    )
-                    await redis_store.save_message(
-                        user_id, session_id, reasoning_message
-                    )
-                    logger.debug(
-                        f"Saved reasoning step at separator: {current_step_content[:100]}..."
-                    )
-                current_step_content = ""  # Reset for next step
-            elif event["type"] == "error":
-                # An error occurred - save accumulated reasoning first as assistant
-                if current_step_content.strip():
-                    reasoning_message = Message(
-                        role="assistant",
-                        content=current_step_content,
-                        timestamp=datetime.now(timezone.utc),
-                        is_reasoning=True,
-                    )
-                    await redis_store.save_message(
-                        user_id, session_id, reasoning_message
-                    )
-                    logger.debug(
-                        f"Saved reasoning before error: {current_step_content[:100]}..."
-                    )
-                    current_step_content = ""  # Reset
-
-                # Save error as user message (like observation)
-                error_message = Message(
-                    role="user",
-                    content=event["content"],
-                    timestamp=datetime.now(timezone.utc),
-                    is_reasoning=True,
+                if step.is_final_answer:
+                    final_answer = step.final_answer or step.thinking
+            elif event["type"] == "tool":
+                await redis_store.save_message(
+                    user_id,
+                    session_id,
+                    message_for_tool(event.get("content", "")),
                 )
-                await redis_store.save_message(user_id, session_id, error_message)
-                logger.debug(f"Saved error as observation: {event['content'][:100]}...")
-            elif event["type"] == "final":
-                # Save any remaining accumulated content before final
-                if current_step_content.strip():
-                    reasoning_message = Message(
-                        role="assistant",
-                        content=current_step_content,
-                        timestamp=datetime.now(timezone.utc),
-                        is_reasoning=True,
-                    )
-                    logger.debug(
-                        f"Saving Remaining Reasoning messages: {current_step_content[:100]}..."
-                    )
-                    await redis_store.save_message(
-                        user_id, session_id, reasoning_message
-                    )
-                final_answer = event["content"]
 
-        # Save Assistant Message (Final)
         if final_answer:
-            # Format the response to extract any base64 images into structured format
-            formatted_response = format_assistant_message(final_answer)
-            assistant_message = Message(
-                role="assistant",
-                content=json.dumps(formatted_response),
-                timestamp=datetime.now(timezone.utc),
-                is_reasoning=False,
-            )
-            logger.debug(
-                f"Saving Assistant Message: {final_answer[:100]}... for session {session_id}"
-            )
-            await redis_store.save_message(user_id, session_id, assistant_message)
-
-        # Save functions/imports to Redis
-        try:
-            current_imports, current_functions = agent.get_all_defined_functions()
-            await redis_store.save_functions(user_id, session_id, current_functions)
-            await redis_store.save_imports(user_id, session_id, current_imports)
-            logger.debug(
-                f"Saved {len(current_functions)} functions and {len(current_imports)} imports for session {session_id}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to save functions/imports for session {session_id}: {e}"
-            )
+            try:
+                async with async_session_maker() as ws_db:
+                    result = await ws_db.execute(
+                        select(User).where(User.id == uuid.UUID(user_id))
+                    )
+                    ws_user = result.scalar_one_or_none()
+                    if ws_user:
+                        await artifact_service.save_generated_images_from_text(
+                            ws_db, ws_user, session_id, final_answer
+                        )
+                        await ws_db.commit()
+            except Exception as gen_err:
+                logger.warning(f"WS generated image save failed: {gen_err}")
 
         await websocket.close()
 
@@ -405,5 +293,5 @@ async def websocket_endpoint(
         try:
             await websocket.send_json({"type": "error", "content": str(e)})
             await websocket.close()
-        except:
+        except Exception:
             pass

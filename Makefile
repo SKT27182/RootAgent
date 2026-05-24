@@ -1,176 +1,119 @@
-# =============================================================================
-# RootAgent Makefile
-# Usage:
-#   make up-build          # runs v1 (default)
-#   make up-build v=v2     # runs v2
-#   make up v=v1           # rollback to v1
-# =============================================================================
+SHELL := /bin/bash
 
-.PHONY: help build build-fresh up up-build up-build-debug down down-volumes \
-        restart restart-backend restart-frontend logs logs-backend logs-frontend \
-        logs-redis ps shell-backend shell-frontend shell-redis clean prune reset \
-        dev dev-backend dev-frontend dev-redis dev-stop dev-stop-redis \
-        install test test-cov health
+.PHONY: help install dev-local dev up down clean clean-all clean-hard print-urls prepare-logs stop-local logs logs-local \
+	build test test-cov lint format db-migrate db-revision db-shell redis-cli
 
-# ================================
-# Version handling
-# ================================
-APP_NAME ?= rootagent
-v ?= v1
+CYAN := \033[36m
+RESET := \033[0m
 
-export APP_NAME
-export APP_VERSION := $(v)
+BACKEND_VENV := backend/.venv/bin
+BACKEND_UVICORN := $(BACKEND_VENV)/uvicorn
+LOG_DIR := $(HOME)/.local/share/dev-logs/rootagent
+BACKEND_LOG := $(LOG_DIR)/backend.log
+FRONTEND_LOG := $(LOG_DIR)/frontend.log
+BACKEND_PID := $(LOG_DIR)/backend.pid
+FRONTEND_PID := $(LOG_DIR)/frontend.pid
+BACKEND_ENV_FILE := $(if $(wildcard backend/.env),backend/.env,backend/.env.example)
+FRONTEND_ENV_FILE := $(if $(wildcard frontend/.env),frontend/.env,frontend/.env.example)
+APP_HOST_RAW := $(shell awk -F= '/^SERVICE_PUBLIC_HOST=/{gsub(/^[ \t]+|[ \t]+$$/,"",$$2); print $$2; exit}' $(BACKEND_ENV_FILE) 2>/dev/null)
+APP_HOST := $(if $(APP_HOST_RAW),$(APP_HOST_RAW),127.0.0.1)
+BACKEND_PORT_RAW := $(shell awk -F= '/^API_PORT=/{gsub(/^[ \t]+|[ \t]+$$/,"",$$2); print $$2; exit}' $(BACKEND_ENV_FILE) 2>/dev/null)
+BACKEND_PORT := $(if $(BACKEND_PORT_RAW),$(BACKEND_PORT_RAW),8890)
+FRONTEND_PORT_RAW := $(shell awk -F= '/^VITE_PORT=/{gsub(/^[ \t]+|[ \t]+$$/,"",$$2); print $$2; exit}' $(FRONTEND_ENV_FILE) 2>/dev/null)
+FRONTEND_PORT := $(if $(FRONTEND_PORT_RAW),$(FRONTEND_PORT_RAW),5145)
 
-# ================================
-# Help
-# ================================
-help:
-	@echo "RootAgent Commands:"
-	@echo ""
-	@echo "=== Docker Commands ==="
-	@echo "  make build              - Build images (default v1)"
-	@echo "  make build v=v2         - Build images with version v2"
-	@echo "  make up                 - Start services"
-	@echo "  make up v=v2            - Start services with version v2"
-	@echo "  make up-build           - Build + start services"
-	@echo "  make up-build v=v2      - Build + start version v2"
-	@echo "  make down               - Stop services"
-	@echo "  make restart            - Restart services"
-	@echo "  make logs               - Follow all logs"
-	@echo "  make ps                 - Show running containers"
-	@echo "  make clean              - Stop and remove containers"
-	@echo ""
-	@echo "=== Local Development ==="
-	@echo "  make dev                - Backend + Redis (backend local)"
-	@echo "  make dev-backend        - Backend only"
-	@echo "  make dev-frontend       - Frontend locally"
-	@echo "  make dev-redis          - Redis in Docker"
-	@echo "  make dev-stop           - Stop local dev services"
-	@echo "  make install            - Install Python deps"
-	@echo "  make test               - Run tests"
-	@echo ""
-	@echo "Current version: $(APP_VERSION)"
+POSTGRES_USER ?= admin
+POSTGRES_DB ?= rootagent
+REDIS_PASSWORD ?= password
 
-# ================================
-# Docker Commands
-# ================================
+help: ## Show this help
+	@echo "RootAgent - Available commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)%-15s$(RESET) %s\n", $$1, $$2}'
 
-build:
-	@echo "Building $(APP_NAME) version $(APP_VERSION)"
-	docker compose build
+install: ## Install backend (uv sync) and frontend (pnpm install) dependencies
+	cd backend && uv sync
+	cd frontend && pnpm install
 
-build-fresh:
-	@echo "Building $(APP_NAME) version $(APP_VERSION) (no cache)"
-	docker compose build --no-cache
+prepare-logs:
+	@mkdir -p "$(LOG_DIR)"
+	@: > "$(BACKEND_LOG)"
+	@: > "$(FRONTEND_LOG)"
 
-up:
-	@echo "Starting $(APP_NAME) version $(APP_VERSION)"
-	docker compose up -d
+dev-local: install prepare-logs ## Run backend + frontend locally (no Docker), with log files
+	@echo "backend log:  $(BACKEND_LOG)"
+	@echo "frontend log: $(FRONTEND_LOG)"
+	@$(MAKE) --no-print-directory print-urls
+	@bash -c 'set -euo pipefail; \
+		trap '"'"'kill $$backend_pid $$frontend_pid 2>/dev/null || true; rm -f "$(BACKEND_PID)" "$(FRONTEND_PID)"'"'"' INT TERM EXIT; \
+		( set -a; [ -f backend/.env ] && source backend/.env; set +a; \
+		  PYTHONWARNINGS=ignore::UserWarning:multiprocessing.resource_tracker \
+		  $(BACKEND_UVICORN) app.main:app --reload --port "$${API_PORT:-$(BACKEND_PORT)}" --app-dir backend \
+		) >> "$(BACKEND_LOG)" 2>&1 & backend_pid=$$!; echo $$backend_pid > "$(BACKEND_PID)"; \
+		( set -a; [ -f backend/.env ] && source backend/.env; set +a; \
+		  cd frontend && VITE_DEV_API_TARGET="http://127.0.0.1:$${API_PORT:-$(BACKEND_PORT)}" pnpm run dev \
+		) >> "$(FRONTEND_LOG)" 2>&1 & frontend_pid=$$!; echo $$frontend_pid > "$(FRONTEND_PID)"; \
+		wait $$backend_pid $$frontend_pid'
 
-up-build:
-	@echo "Building & starting $(APP_NAME) version $(APP_VERSION)"
+up: ## Start app containers in Docker
 	docker compose up -d --build
+	@$(MAKE) --no-print-directory print-urls
 
-up-build-debug:
-	@echo "Building & starting $(APP_NAME) version $(APP_VERSION) (foreground)"
-	docker compose up --build
+dev: up ## Run with Docker
 
-down:
+stop-local: ## Stop locally started backend/frontend processes from pid files
+	@if [ -f "$(BACKEND_PID)" ]; then kill "$$(cat "$(BACKEND_PID)")" 2>/dev/null || true; rm -f "$(BACKEND_PID)"; fi
+	@if [ -f "$(FRONTEND_PID)" ]; then kill "$$(cat "$(FRONTEND_PID)")" 2>/dev/null || true; rm -f "$(FRONTEND_PID)"; fi
+
+down: stop-local ## Stop Docker app and local dev processes
 	docker compose down
 
-down-volumes:
-	docker compose down -v
-
-restart:
-	docker compose restart
-
-restart-backend:
-	docker compose restart backend
-
-restart-frontend:
-	docker compose restart frontend
-
-logs:
+logs: ## View Docker logs
 	docker compose logs -f
 
-logs-backend:
-	docker compose logs -f backend
+logs-local: ## Tail local backend/frontend log files
+	@tail -f "$(BACKEND_LOG)" "$(FRONTEND_LOG)"
 
-logs-frontend:
-	docker compose logs -f frontend
+build: ## Build frontend for production
+	cd frontend && pnpm run build
 
-logs-redis:
-	docker compose logs -f redis
+test: ## Run backend tests
+	cd backend && .venv/bin/pytest tests/ -v
 
-ps:
-	docker compose ps
+test-cov: ## Run tests with coverage
+	cd backend && .venv/bin/pytest tests/ -v --cov=app --cov-report=html
 
-shell-backend:
-	docker compose exec backend /bin/bash
+lint: ## Lint backend code
+	$(BACKEND_VENV)/ruff check app/
 
-shell-frontend:
-	docker compose exec frontend /bin/sh
+format: ## Format backend code
+	$(BACKEND_VENV)/ruff format app/
 
-shell-redis:
-	docker compose exec redis redis-cli
+db-migrate: ## Run database migrations
+	cd backend && .venv/bin/alembic -c alembic.ini upgrade head
 
-health:
-	@curl -s http://localhost/health || echo "Service not responding"
+db-revision: ## Create new migration
+	@read -p "Migration message: " msg; \
+	cd backend && .venv/bin/alembic -c alembic.ini revision --autogenerate -m "$$msg"
 
-clean: down
-	docker compose rm -f
+db-shell: ## Open PostgreSQL shell (infra-hub)
+	docker exec -it infra-postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)
 
-prune:
-	docker system prune -f
+redis-cli: ## Open Redis CLI (infra-hub)
+	docker exec -it infra-redis redis-cli -a $(REDIS_PASSWORD)
 
-reset: down-volumes
-	docker compose rm -f
-	docker system prune -f
+clean: stop-local ## Clean local artifacts and pid files
+	rm -rf frontend/dist backend/.pytest_cache backend/htmlcov
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
-# ================================
-# Local Development
-# ================================
+clean-all: clean ## Remove logs and Docker resources
+	rm -f "$(BACKEND_LOG)" "$(FRONTEND_LOG)"
+	docker compose down -v --remove-orphans
 
-install:
-	@if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
-	@. .venv/bin/activate && pip install -e . 2>/dev/null || \
-	  pip install -r requirements.txt 2>/dev/null || uv sync
+clean-hard: stop-local ## Force cleanup: stop/remove containers, networks, volumes, and local logs
+	rm -f "$(BACKEND_LOG)" "$(FRONTEND_LOG)"
+	docker compose down --volumes --remove-orphans --rmi local
 
-dev-redis:
-	docker compose up -d redis
-
-dev-backend:
-	@echo "Starting backend locally..."
-	@. .venv/bin/activate && \
-	 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
-
-dev: dev-redis
-	@echo "Redis started. Starting backend locally..."
-	@sleep 2
-	@. .venv/bin/activate && \
-	 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
-
-dev-frontend:
-	@echo "Serving frontend at http://localhost:3000"
-	@cd frontend && python3 -m http.server 3000
-
-dev-stop-redis:
-	docker compose stop redis
-	docker compose rm -f redis
-
-dev-stop:
-	@echo "Stopping local dev services..."
-	@-pkill -f "uvicorn backend.app.main:app" 2>/dev/null || true
-	@-pkill -f "python3 -m http.server" 2>/dev/null || true
-	@docker compose stop redis 2>/dev/null || true
-	@echo "Local dev services stopped."
-
-# ================================
-# Tests
-# ================================
-
-test:
-	@. .venv/bin/activate && pytest backend/tests/ -v
-
-test-cov:
-	@. .venv/bin/activate && pytest backend/tests/ -v --cov=backend
+print-urls: ## Print frontend/backend URLs from env-configured ports
+	@echo "Backend URL:  http://$(APP_HOST):$(BACKEND_PORT)"
+	@echo "Frontend URL: http://$(APP_HOST):$(FRONTEND_PORT)"
