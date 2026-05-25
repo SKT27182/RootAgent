@@ -8,6 +8,7 @@ from this file - never use os.getenv() directly elsewhere.
 import json
 import os
 from typing import Optional
+from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -84,23 +85,42 @@ class Settings(BaseSettings):
     # App
     debug: bool = Field(default=True)
     api_port: int = Field(default=8890)
+    app_public_url: Optional[str] = Field(default=None)
+    app_public_host: Optional[str] = Field(default=None)
     service_public_host: str = Field(default="localhost")
     cors_origins: str = Field(
         default="http://localhost:5145,http://127.0.0.1:5145",
     )
     log_level: str = Field(default="INFO")
 
+    @model_validator(mode="after")
+    def apply_public_app_settings(self) -> "Settings":
+        if self.app_public_host:
+            self.service_public_host = self.app_public_host
+        elif self.app_public_url:
+            hostname = urlparse(self.app_public_url).hostname
+            if hostname:
+                self.service_public_host = hostname
+        return self
+
     @property
     def cors_origins_list(self) -> list[str]:
         raw = self.cors_origins.strip()
         if not raw:
-            return []
-        if raw.startswith("["):
+            origins: list[str] = []
+        elif raw.startswith("["):
             parsed = json.loads(raw)
             if not isinstance(parsed, list):
                 raise ValueError("CORS_ORIGINS JSON value must be a list")
-            return [str(item).strip() for item in parsed if str(item).strip()]
-        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+            origins = [str(item).strip() for item in parsed if str(item).strip()]
+        else:
+            origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+        if self.app_public_url:
+            public_origin = self.app_public_url.rstrip("/")
+            if public_origin not in origins:
+                origins.append(public_origin)
+        return origins
 
     def validate_llm(self) -> None:
         if not self.llm_api_key:
