@@ -15,7 +15,10 @@ api.interceptors.request.use((config) => {
 export interface AuthUser {
   id: string;
   email: string;
+  name: string;
   role: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ArtifactItem {
@@ -38,12 +41,26 @@ export const login = async (email: string, password: string) => {
   });
 };
 
-export const register = async (email: string, password: string) => {
-  return api.post('/auth/register', { email, password });
+export const register = async (email: string, name: string, password: string) => {
+  return api.post('/auth/register', { email, name, password });
 };
 
 export const getMe = async () => {
   return api.get<AuthUser>('/auth/me');
+};
+
+export const updateProfile = async (name: string) => {
+  return api.patch<AuthUser>('/auth/me/profile', { name });
+};
+
+export const changePassword = async (
+  currentPassword: string,
+  newPassword: string
+) => {
+  return api.post('/auth/me/password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
 };
 
 export const getSessions = async (userId: string) => {
@@ -87,3 +104,51 @@ export const deleteArtifact = async (sessionId: string, artifactId: string) => {
 export const getArtifactDownloadUrl = (sessionId: string, artifactId: string) => {
   return `/artifacts/${sessionId}/${artifactId}/download`;
 };
+
+export interface ChatRequestPayload {
+  query: string;
+  user_id: string;
+  session_id: string | null;
+  include_reasoning: boolean;
+  images: string[] | null;
+  csv_data: string | null;
+  artifact_ids: string[] | null;
+}
+
+export interface ChatResponsePayload {
+  response: string;
+  session_id: string;
+  message_id: string;
+}
+
+export const sendChatMessage = async (payload: ChatRequestPayload) => {
+  const response = await api.post<ChatResponsePayload>('/chat/', payload);
+  return response.data;
+};
+
+export async function downloadArtifact(
+  sessionId: string,
+  artifactId: string,
+  filename: string
+): Promise<void> {
+  const response = await api.get(
+    `/artifacts/${sessionId}/${artifactId}/download`,
+    { responseType: 'blob' }
+  );
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function getChatWebSocketUrl(): string {
+  const apiTarget = import.meta.env.VITE_DEV_API_TARGET as string | undefined
+  if (apiTarget) {
+    const wsBase = apiTarget.replace(/^http/, 'ws')
+    return `${wsBase}/chat/ws`
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${window.location.host}/chat/ws`
+}

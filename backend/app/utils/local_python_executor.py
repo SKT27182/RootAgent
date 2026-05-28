@@ -18,7 +18,6 @@ import ast
 import builtins
 import difflib
 import inspect
-import logging
 import math
 import re
 from abc import ABC, abstractmethod
@@ -31,6 +30,9 @@ from types import BuiltinFunctionType, FunctionType, ModuleType
 from typing import Any
 
 from typing import Callable as Tool
+
+from app.core.config import settings
+from app.utils.logger import create_logger
 
 BASE_BUILTIN_MODULES = [
     "collections",
@@ -62,7 +64,7 @@ def truncate_content(
         )
 
 
-logger = logging.getLogger(__name__)
+logger = create_logger(__name__, level=settings.log_level)
 
 
 class InterpreterError(ValueError):

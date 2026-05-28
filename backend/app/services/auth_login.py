@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import get_password_hash, verify_password
 from app.db.models import User, UserRole
 from app.services.infra_hub_users import InfraHubUser, verify_infra_hub_credentials
+from app.core.config import settings
 from app.utils.logger import create_logger
 
-logger = create_logger(__name__)
+logger = create_logger(__name__, level=settings.log_level)
 
 # Placeholder hash for infra-linked rows (auth always via main_db).
 _UNUSABLE_PASSWORD_HASH = get_password_hash(secrets.token_urlsafe(32))
@@ -27,6 +28,7 @@ async def get_or_create_infra_linked_user(
     if user is None:
         user = User(
             email=infra_user.email,
+            name=infra_user.name,
             hashed_password=_UNUSABLE_PASSWORD_HASH,
             role=UserRole.INFRA_ADMIN,
             infra_hub_user_id=infra_user.id,
@@ -39,6 +41,7 @@ async def get_or_create_infra_linked_user(
 
     user.role = UserRole.INFRA_ADMIN
     user.infra_hub_user_id = infra_user.id
+    user.name = infra_user.name
     await db.commit()
     await db.refresh(user)
     return user
@@ -56,6 +59,7 @@ async def authenticate_user(
     """
     infra_user = await verify_infra_hub_credentials(email, password)
     if infra_user is not None:
+        logger.debug("Authenticated via infra-hub for %s", email)
         return await get_or_create_infra_linked_user(db, infra_user)
 
     result = await db.execute(select(User).where(User.email == email))
@@ -68,5 +72,7 @@ async def authenticate_user(
         return None
 
     if not verify_password(password, local_user.hashed_password):
+        logger.debug("Local auth failed for %s", email)
         return None
+    logger.debug("Authenticated via RootAgent-local for %s", email)
     return local_user

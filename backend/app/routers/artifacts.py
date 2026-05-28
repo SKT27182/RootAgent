@@ -11,7 +11,11 @@ from app.core.dependencies import DbSession, get_current_active_user
 from app.db.models import User
 from app.schemas.artifact import ArtifactResponse
 from app.services import artifact_service
+from app.core.config import settings
 from app.services.storage import get_storage_service
+from app.utils.logger import create_logger
+
+logger = create_logger(__name__, level=settings.log_level)
 
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
 
@@ -53,6 +57,12 @@ async def upload_artifact(
     )
     storage = get_storage_service()
     preview_url = storage.get_presigned_url(artifact.storage_path)
+    logger.info(
+        "Artifact uploaded: session=%s file=%s user=%s",
+        session_id,
+        file.filename,
+        current_user.email,
+    )
     return _to_response(artifact, preview_url)
 
 
@@ -122,3 +132,9 @@ async def delete_artifact_route(
     )
     if not deleted:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    logger.info(
+        "Artifact deleted: session=%s artifact=%s user=%s",
+        session_id,
+        artifact_id,
+        current_user.email,
+    )

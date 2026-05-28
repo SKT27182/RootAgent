@@ -9,4 +9,5 @@ logger = create_logger(__name__, level=settings.log_level)
 
 @router.get("/health")
 async def health_check():
+    logger.verbose("Health check OK")
     return {"status": "ok"}
