@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help install dev-local dev up down clean clean-all clean-hard print-urls prepare-logs stop-local logs logs-local \
+.PHONY: help install dev-local dev up down clean clean-all clean-hard print-urls prepare-logs stop-local wait-db logs logs-local \
 	build test test-cov lint format db-migrate db-revision db-shell redis-cli
 
 CYAN := \033[36m
@@ -13,6 +13,8 @@ BACKEND_LOG := $(LOG_DIR)/backend.log
 FRONTEND_LOG := $(LOG_DIR)/frontend.log
 BACKEND_PID := $(LOG_DIR)/backend.pid
 FRONTEND_PID := $(LOG_DIR)/frontend.pid
+# DEV_LOG_MODE: file | console | both (default)
+DEV_LOG_MODE ?= both
 BACKEND_ENV_FILE := $(if $(wildcard backend/.env),backend/.env,backend/.env.example)
 FRONTEND_ENV_FILE := $(if $(wildcard frontend/.env),frontend/.env,frontend/.env.example)
 APP_HOST_RAW := $(shell awk -F= '/^SERVICE_PUBLIC_HOST=/{gsub(/^[ \t]+|[ \t]+$$/,"",$$2); print $$2; exit}' $(BACKEND_ENV_FILE) 2>/dev/null)
@@ -21,6 +23,9 @@ BACKEND_PORT_RAW := $(shell awk -F= '/^API_PORT=/{gsub(/^[ \t]+|[ \t]+$$/,"",$$2
 BACKEND_PORT := $(if $(BACKEND_PORT_RAW),$(BACKEND_PORT_RAW),8890)
 FRONTEND_PORT_RAW := $(shell awk -F= '/^VITE_PORT=/{gsub(/^[ \t]+|[ \t]+$$/,"",$$2); print $$2; exit}' $(FRONTEND_ENV_FILE) 2>/dev/null)
 FRONTEND_PORT := $(if $(FRONTEND_PORT_RAW),$(FRONTEND_PORT_RAW),5145)
+INFRA_HUB_DIR := ../infra-hub
+INFRA_HUB_PERSIST_DIR := $(INFRA_HUB_DIR)/volumes
+INFRA_POSTGRES_CONTAINER ?= infra-postgres
 
 POSTGRES_USER ?= admin
 POSTGRES_DB ?= rootagent
@@ -36,22 +41,41 @@ install: ## Install backend (uv sync) and frontend (pnpm install) dependencies
 
 prepare-logs:
 	@mkdir -p "$(LOG_DIR)"
-	@: > "$(BACKEND_LOG)"
-	@: > "$(FRONTEND_LOG)"
+	@if [ "$(DEV_LOG_MODE)" != "console" ]; then \
+		: > "$(BACKEND_LOG)"; \
+		: > "$(FRONTEND_LOG)"; \
+	fi
 
-dev-local: install prepare-logs ## Run backend + frontend locally (no Docker), with log files
-	@echo "backend log:  $(BACKEND_LOG)"
-	@echo "frontend log: $(FRONTEND_LOG)"
+dev-local: install prepare-logs ## Run backend + frontend locally (DEV_LOG_MODE=file|console|both)
+	@$(MAKE) --no-print-directory stop-local
+	@$(MAKE) --no-print-directory wait-db
+	@echo "log mode: $(DEV_LOG_MODE)"
+	@if [ "$(DEV_LOG_MODE)" != "console" ]; then \
+		echo "backend log:  $(BACKEND_LOG)"; \
+		echo "frontend log: $(FRONTEND_LOG)"; \
+	fi
 	@$(MAKE) --no-print-directory print-urls
 	@bash -c 'set -euo pipefail; \
+		log_mode="$(DEV_LOG_MODE)"; \
+		case "$$log_mode" in file|console|both) ;; \
+			*) echo "Invalid DEV_LOG_MODE: $$log_mode (use file, console, or both)" >&2; exit 1 ;; \
+		esac; \
+		setup_log_pipe() { \
+			local logfile="$$1"; \
+			case "$$log_mode" in \
+				console) ;; \
+				both) exec > >(tee -a "$$logfile") 2>&1 ;; \
+				file|*) exec >> "$$logfile" 2>&1 ;; \
+			esac; \
+		}; \
 		trap '"'"'kill $$backend_pid $$frontend_pid 2>/dev/null || true; rm -f "$(BACKEND_PID)" "$(FRONTEND_PID)"'"'"' INT TERM EXIT; \
-		( set -a; [ -f backend/.env ] && source backend/.env; set +a; \
+		( setup_log_pipe "$(BACKEND_LOG)"; set -a; [ -f backend/.env ] && source backend/.env; set +a; \
 		  PYTHONWARNINGS=ignore::UserWarning:multiprocessing.resource_tracker \
 		  $(BACKEND_UVICORN) app.main:app --reload --port "$${API_PORT:-$(BACKEND_PORT)}" --app-dir backend \
-		) >> "$(BACKEND_LOG)" 2>&1 & backend_pid=$$!; echo $$backend_pid > "$(BACKEND_PID)"; \
-		( set -a; [ -f backend/.env ] && source backend/.env; set +a; \
+		) & backend_pid=$$!; echo $$backend_pid > "$(BACKEND_PID)"; \
+		( setup_log_pipe "$(FRONTEND_LOG)"; set -a; [ -f backend/.env ] && source backend/.env; set +a; \
 		  cd frontend && VITE_DEV_API_TARGET="http://127.0.0.1:$${API_PORT:-$(BACKEND_PORT)}" pnpm run dev \
-		) >> "$(FRONTEND_LOG)" 2>&1 & frontend_pid=$$!; echo $$frontend_pid > "$(FRONTEND_PID)"; \
+		) & frontend_pid=$$!; echo $$frontend_pid > "$(FRONTEND_PID)"; \
 		wait $$backend_pid $$frontend_pid'
 
 up: ## Start app containers in Docker
@@ -63,6 +87,26 @@ dev: up ## Run with Docker
 stop-local: ## Stop locally started backend/frontend processes from pid files
 	@if [ -f "$(BACKEND_PID)" ]; then kill "$$(cat "$(BACKEND_PID)")" 2>/dev/null || true; rm -f "$(BACKEND_PID)"; fi
 	@if [ -f "$(FRONTEND_PID)" ]; then kill "$$(cat "$(FRONTEND_PID)")" 2>/dev/null || true; rm -f "$(FRONTEND_PID)"; fi
+	@for port in "$(BACKEND_PORT)" "$(FRONTEND_PORT)"; do \
+		pids="$$(ss -ltnp | awk -v p=":$$port$$" '$$4 ~ p {print}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | sort -u)"; \
+		if [ -n "$$pids" ]; then \
+			echo "Stopping processes on port $$port: $$pids"; \
+			kill $$pids 2>/dev/null || true; \
+		fi; \
+	done
+
+wait-db: ## Wait for shared infra postgres to become healthy
+	@echo "Waiting for shared PostgreSQL container to be healthy..."
+	@timeout 90 bash -c 'set -euo pipefail; \
+		container="$(INFRA_POSTGRES_CONTAINER)"; \
+		until docker inspect "$$container" >/dev/null 2>&1; do sleep 1; done; \
+		while true; do \
+			status=$$(docker inspect -f "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" "$$container" 2>/dev/null || true); \
+			if [ "$$status" = "healthy" ] || [ "$$status" = "running" ]; then \
+				break; \
+			fi; \
+			sleep 1; \
+		done'
 
 down: stop-local ## Stop Docker app and local dev processes
 	docker compose down
@@ -113,6 +157,10 @@ clean-all: clean ## Remove logs and Docker resources
 clean-hard: stop-local ## Force cleanup: stop/remove containers, networks, volumes, and local logs
 	rm -f "$(BACKEND_LOG)" "$(FRONTEND_LOG)"
 	docker compose down --volumes --remove-orphans --rmi local
+	@if [ -f "$(INFRA_HUB_DIR)/docker-compose.yml" ]; then \
+		docker compose -f "$(INFRA_HUB_DIR)/docker-compose.yml" down --volumes --remove-orphans --rmi local; \
+	fi
+	@rm -rf "$(INFRA_HUB_PERSIST_DIR)"
 
 print-urls: ## Print frontend/backend URLs from env-configured ports
 	@echo "Backend URL:  http://$(APP_HOST):$(BACKEND_PORT)"

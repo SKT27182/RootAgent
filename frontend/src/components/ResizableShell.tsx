@@ -19,17 +19,17 @@ export function ResizableShell({ left, main, right, className }: ResizableShellP
       }
       id="rootagent-chat-panels"
     >
-      <Panel id="left" defaultSize={22} minSize={14} maxSize={35}>
+      <Panel id="left" defaultSize="22%" minSize="14%" maxSize="35%">
         {left}
       </Panel>
       <Separator className="w-1 bg-border hover:bg-primary/20 transition-colors" />
-      <Panel id="main" minSize={35}>
+      <Panel id="main" minSize="35%">
         {main}
       </Panel>
       {right && (
         <>
           <Separator className="w-1 bg-border hover:bg-primary/20 transition-colors" />
-          <Panel id="right" defaultSize={28} minSize={18} maxSize={40}>
+          <Panel id="right" defaultSize="28%" minSize="18%" maxSize="40%">
             {right}
           </Panel>
         </>
