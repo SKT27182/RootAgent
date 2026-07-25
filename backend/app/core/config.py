@@ -31,6 +31,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
         protected_namespaces=("settings_",),
+        populate_by_name=True,
     )
 
     # PostgreSQL

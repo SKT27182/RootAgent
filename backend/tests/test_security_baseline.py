@@ -225,7 +225,8 @@ def test_production_settings_reject_unsafe_local_executor() -> None:
         "minio_endpoint": "minio.internal:9000",
         "minio_secure": True,
         "jwt_secret": "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
-        "llm_api_key": "a-real-llm-key",
+        # Field uses alias=LLM_API_KEY; pass the alias so CI (no .env) still applies it.
+        "LLM_API_KEY": "a-real-llm-key",
         "app_public_url": "https://rootagent.example.com",
         "cors_origins": "https://rootagent.example.com",
         "trusted_proxy_ips": "10.0.0.0/8",
