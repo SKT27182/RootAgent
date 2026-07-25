@@ -161,6 +161,12 @@ jobs:
         run: |
           docker compose up -d --no-build
           timeout 120 sh -c 'until curl -fsS http://127.0.0.1:8890/health/ready; do sleep 2; done'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.11.29
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Central proxy WebSocket smoke test
         run: |
           docker run -d --name rootagent-ci-proxy --network infra-network \
