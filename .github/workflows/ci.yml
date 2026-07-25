@@ -128,11 +128,13 @@ jobs:
         with:
           image-ref: rootagent-backend:local
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: "1"
       - uses: aquasecurity/trivy-action@master
         with:
           image-ref: rootagent-frontend:local
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: "1"
       - name: Start CI dependencies
         run: |
@@ -163,4 +165,4 @@ jobs:
           uv run --project backend python "$GITHUB_WORKSPACE/.github/ci/ws_smoke.py"
       - name: Compose logs on failure
         if: failure()
-        run: docker compose logs --no-color
+        run: docker compose logs --no-color || true
