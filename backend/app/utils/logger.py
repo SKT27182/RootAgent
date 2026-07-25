@@ -2,7 +2,7 @@ import logging
 from logging import Logger
 import datetime
 import os
-from copy import deepcopy
+from copy import copy
 
 from typing import Optional, List, Literal, Callable, Dict
 
@@ -32,6 +32,14 @@ COLOUR_MAPPING = {
     "BOLD": "\033[1m",
     "UNDERLINE": "\033[4m",
 }
+
+
+def structured_logging_enabled() -> bool:
+    return (
+        os.environ.get("LOG_FORMAT", "").strip().lower() == "json"
+        or os.environ.get("ENVIRONMENT", "development").strip().lower()
+        == "production"
+    )
 
 
 class ColumnNotFound(Exception):
@@ -82,7 +90,12 @@ class CustomFormatter(logging.Formatter):
     }
 
     def format(self, record):
-        formatted_record = deepcopy(record)
+        # Third-party servers may attach live request/application objects to a
+        # LogRecord (for example Uvicorn's WebSocket ``scope``). Those objects
+        # can be recursive or intentionally non-pickleable, so deep-copying the
+        # record can break the request while merely trying to write its log.
+        # A shallow copy is enough because this formatter only changes ``name``.
+        formatted_record = copy(record)
 
         level_name = formatted_record.levelname
         color = self.COLORS.get(level_name, "")
@@ -224,7 +237,7 @@ def create_logger(
     # Console handler with color formatting
     console_handler: logging.StreamHandler = logging.StreamHandler()
     console_handler.setLevel(level_int)
-    console_handler.setFormatter(custom_formatter)
+    console_handler.setFormatter(json_formatter if structured_logging_enabled() else custom_formatter)
     logger.addHandler(console_handler)
 
     # File logging setup

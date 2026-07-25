@@ -9,6 +9,7 @@ export const adminApi = {
 
   createUser: async (payload: {
     email: string
+    name: string
     password: string
     role: string
   }): Promise<AuthUser> => {

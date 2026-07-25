@@ -3,7 +3,26 @@
 # Requires infra-hub running with external network: infra-network
 # =============================================================================
 services:
+  migrate:
+    image: rootagent-backend:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: "no"
+    env_file:
+      - backend/.env
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    networks:
+      - infra-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
   backend:
+    image: rootagent-backend:local
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -15,26 +34,63 @@ services:
       - "127.0.0.1:8890:8890"
     networks:
       - infra-network
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8890/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8890/health/ready"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 30s
 
+  cleanup-worker:
+    image: rootagent-backend:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    command: ["python", "-m", "scripts.cleanup_worker"]
+    networks:
+      - infra-network
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
   frontend:
+    image: rootagent-frontend:local
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: rootagent-frontend
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5145:80"
+      - "127.0.0.1:5145:8080"
     networks:
       - infra-network
     depends_on:
       backend:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
 
 networks:
   infra-network:

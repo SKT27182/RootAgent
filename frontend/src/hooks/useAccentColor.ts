@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useTheme } from '@/components/theme-provider'
+import { useTheme } from '@/lib/theme-context'
 import {
   type AccentId,
   applyAccentTokens,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Shield, Plus, Trash2, ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -6,32 +6,26 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { adminApi } from '@/lib/admin-api'
 import type { AuthUser } from '@/api'
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib/auth-types'
 import {
   canCreateAdmin,
   canDeleteUser,
   canManageRoles,
   hasAdminAccess,
 } from '@/lib/roles'
-import { Navigate } from 'react-router-dom'
 export default function AdminPage() {
   const { user: currentUser } = useAuth()
   const [users, setUsers] = useState<AuthUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [newRole, setNewRole] = useState<'USER' | 'ADMIN'>('USER')
   const [saving, setSaving] = useState(false)
 
-  if (!hasAdminAccess(currentUser?.role)) {
-    return <Navigate to="/" replace />
-  }
-
-  const load = async () => {
-    setLoading(true)
-    setError('')
+  const load = useCallback(async () => {
     try {
       setUsers(await adminApi.listUsers())
     } catch (e: unknown) {
@@ -43,18 +37,42 @@ export default function AdminPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    load()
+    let active = true
+    void adminApi.listUsers()
+      .then((items) => {
+        if (active) setUsers(items)
+      })
+      .catch((e: unknown) => {
+        if (!active) return
+        const msg =
+          e && typeof e === 'object' && 'response' in e
+            ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+            : null
+        setError(msg || (e instanceof Error ? e.message : 'Failed to load users'))
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
   }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setError('Name is required')
+      return
+    }
     setSaving(true)
     setError('')
     try {
-      await adminApi.createUser({ email, password, role: newRole })
+      await adminApi.createUser({ name: trimmedName, email, password, role: newRole })
+      setName('')
       setEmail('')
       setPassword('')
       setShowCreate(false)
@@ -68,6 +86,10 @@ export default function AdminPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  if (!hasAdminAccess(currentUser?.role)) {
+    return null
   }
 
   const handleRoleChange = async (userId: string, role: string) => {
@@ -136,6 +158,15 @@ export default function AdminPage() {
             <CardContent>
               <form onSubmit={handleCreate} className="grid gap-4 max-w-md">
                 <Input
+                  type="text"
+                  placeholder="Name"
+                  aria-label="Name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  autoComplete="name"
+                />
+                <Input
                   type="email"
                   placeholder="Email"
                   value={email}
@@ -181,6 +212,7 @@ export default function AdminPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
+                    <th className="p-4">Name</th>
                     <th className="p-4">Email</th>
                     <th className="p-4">Role</th>
                     <th className="p-4 text-right">Actions</th>
@@ -193,6 +225,7 @@ export default function AdminPage() {
                     const canDel = canDeleteUser(currentUser?.role, u.role) && u.id !== currentUser?.id
                     return (
                       <tr key={u.id} className="border-b last:border-0">
+                        <td className="p-4">{u.name}</td>
                         <td className="p-4">{u.email}</td>
                         <td className="p-4">
                           {canEditRole ? (

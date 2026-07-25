@@ -1,6 +1,5 @@
 import json
-from typing import Any, Dict, Optional, Union, Type
-import litellm
+from typing import Dict, Optional, Union, Type
 from litellm import acompletion
 from pydantic import BaseModel
 from app.core.config import settings

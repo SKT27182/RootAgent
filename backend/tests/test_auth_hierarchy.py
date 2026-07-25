@@ -12,6 +12,7 @@ from app.services.infra_hub_users import InfraHubUser
 @pytest.mark.asyncio
 async def test_authenticate_infra_hub_user_creates_linked_row():
     db = AsyncMock()
+    db.add = MagicMock()
     db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: None))
     infra = InfraHubUser(
         id=1,

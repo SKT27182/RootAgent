@@ -1,23 +1,18 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
   parseAgentStep,
-  parseToolOutput,
-  shouldHideMessage,
   userDisplayText,
 } from '@/lib/parse-history'
-import type { Message } from '@/types'
+import type { AgentStep, Message } from '@/types'
+import { safeMarkdownUrl } from '@/lib/markdown-url'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import { PythonCodeBlock } from '@/components/chat/PythonCodeBlock'
 
 function preprocessMarkdown(content: string): string {
-  let text = content
-  text = text.replace(/([^\n])```/g, '$1\n```')
-  text = text.replace(
-    /^(?!.*!\[).*(data:image\/[a-zA-Z]+;base64,[^\s\)]+).*$/gm,
-    '![Generated Image]($1)'
-  )
-  return text
+  return content.replace(/([^\n])```/g, '$1\n```')
 }
 
 const proseReadable =
@@ -38,115 +33,172 @@ function MarkdownBlock({
         inverted && 'prose-invert'
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(uri) => uri}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={safeMarkdownUrl}
+        components={{
+          img: () => <span className="text-muted-foreground">[Use artifact Preview to view images]</span>,
+        }}
+      >
         {preprocessMarkdown(content)}
       </ReactMarkdown>
     </div>
   )
 }
 
-function StepBox({
+export type TraceStepPart = {
+  key: string
+  step: AgentStep
+  observation?: string
+}
+
+function TraceBox({
   label,
-  borderColor,
-  titleColor,
+  expanded,
+  onExpandedChange,
   children,
 }: {
   label: string
-  borderColor: string
-  titleColor: string
+  borderColor?: string
+  titleColor?: string
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
   children: React.ReactNode
 }) {
   return (
-    <Card
+    <div
       className={cn(
-        'p-4 shadow-sm w-full max-w-full bg-muted text-foreground border-l-4',
-        borderColor
+        'w-full max-w-full rounded-xl border border-border/60 bg-muted/30 overflow-hidden transition-all duration-200'
       )}
     >
-      <div className={cn('text-xs font-mono uppercase mb-2', titleColor)}>
-        {label}
-      </div>
-      {children}
-    </Card>
+      <Button
+        type="button"
+        variant="ghost"
+        className="h-auto w-full justify-start rounded-none px-3.5 py-2.5 hover:bg-muted/60 transition-colors"
+        aria-expanded={expanded}
+        onClick={() => onExpandedChange(!expanded)}
+      >
+        {expanded ? (
+          <ChevronDown className="mr-2 h-4 w-4 text-muted-foreground transition-transform" />
+        ) : (
+          <ChevronRight className="mr-2 h-4 w-4 text-muted-foreground transition-transform" />
+        )}
+        <span className="text-xs font-mono font-medium tracking-wide uppercase text-muted-foreground hover:text-foreground">
+          {label}
+        </span>
+      </Button>
+      {expanded && <div className="space-y-4 border-t border-border/40 px-4 py-3.5 bg-background/40">{children}</div>}
+    </div>
   )
 }
 
-function AssistantStepView({ content }: { content: string }) {
-  const step = parseAgentStep(content)
-
+function TraceStepDetails({ part }: { part: TraceStepPart }) {
+  const { step, observation } = part
   return (
-    <div className="flex flex-col gap-3 w-full max-w-full">
+    <div className="space-y-3 border-l-2 border-primary/20 pl-3">
       {step.thinking?.trim() && (
-        <StepBox
-          label="Thinking..."
-          borderColor="border-yellow-500"
-          titleColor="text-yellow-600 dark:text-yellow-400"
-        >
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            Thinking
+          </div>
           <MarkdownBlock content={step.thinking} />
-        </StepBox>
+        </div>
       )}
       {step.code?.trim() && (
-        <StepBox
-          label="Code"
-          borderColor="border-emerald-500"
-          titleColor="text-emerald-600 dark:text-emerald-400"
-        >
-          <pre className="overflow-x-auto rounded-md bg-muted p-4 text-xs dark:bg-zinc-900">
-            <code className="font-mono text-foreground dark:text-zinc-100 whitespace-pre-wrap break-words">
-              {step.code}
-            </code>
-          </pre>
-        </StepBox>
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            Code
+          </div>
+          <PythonCodeBlock code={step.code} />
+        </div>
       )}
-      {step.is_final_answer && (
-        <Card className="p-4 shadow-sm max-w-[85%] border border-border bg-card text-card-foreground">
-          <MarkdownBlock content={step.final_answer ?? step.thinking} />
-        </Card>
+      {observation?.trim() && (
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+            Observation
+          </div>
+          <MarkdownBlock content={observation} />
+        </div>
       )}
     </div>
   )
 }
 
-export function ChatMessageBubble({ msg }: { msg: Message; theme?: 'dark' | 'light' }) {
+export function AgentWorkTrace({
+  parts,
+  expanded,
+  onExpandedChange,
+  streaming = false,
+}: {
+  parts: TraceStepPart[]
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
+  streaming?: boolean
+}) {
+  const label = streaming
+    ? `Working · ${parts.length} step${parts.length === 1 ? '' : 's'}`
+    : `Thought process · ${parts.length} step${parts.length === 1 ? '' : 's'}`
+
+  return (
+    <TraceBox
+      label={label}
+      expanded={expanded}
+      onExpandedChange={onExpandedChange}
+    >
+      <div className="space-y-4">
+        {parts.map((part, index) => (
+          <div key={part.key} className="space-y-2">
+            {parts.length > 1 && (
+              <div className="text-[11px] font-mono font-medium tracking-wider text-primary/80">
+                Step {index + 1}
+              </div>
+            )}
+            <TraceStepDetails part={part} />
+          </div>
+        ))}
+      </div>
+    </TraceBox>
+  )
+}
+
+export function ChatMessageBubble({
+  msg,
+}: {
+  msg: Message
+  observation?: string
+  traceExpanded?: boolean
+  onTraceExpandedChange?: (expanded: boolean) => void
+  theme?: 'dark' | 'light'
+}) {
   if (msg.step_kind === 'user') {
     return (
-      <div className="flex flex-col items-end">
-        <Card
-          className="p-4 max-w-[85%] shadow-sm border-0"
+      <div className="flex flex-col items-end w-full">
+        <div
+          className="px-4 py-3 max-w-[85%] rounded-2xl rounded-tr-sm shadow-sm text-sm leading-relaxed"
           style={{
             backgroundColor: 'var(--chat-user-bg)',
             color: 'hsl(var(--primary-foreground))',
           }}
         >
           <MarkdownBlock content={userDisplayText(msg.content)} inverted />
-        </Card>
-      </div>
-    )
-  }
-
-  if (msg.step_kind === 'tool') {
-    return (
-      <div className="flex flex-col items-start w-full">
-        <StepBox
-          label="Tool"
-          borderColor="border-blue-500"
-          titleColor="text-blue-600 dark:text-blue-400"
-        >
-          <MarkdownBlock content={parseToolOutput(msg.content)} />
-        </StepBox>
+        </div>
       </div>
     )
   }
 
   if (msg.step_kind === 'assistant') {
-    return (
-      <div className="flex flex-col items-start w-full">
-        <AssistantStepView content={msg.content} />
-      </div>
-    )
+    const step = parseAgentStep(msg.content)
+    if (step.is_final_answer) {
+      return (
+        <div className="flex flex-col items-start w-full">
+          <div className="p-4 rounded-2xl rounded-tl-sm max-w-[90%] border border-border/60 bg-card text-card-foreground shadow-sm">
+            <MarkdownBlock content={step.final_answer ?? step.thinking} />
+          </div>
+        </div>
+      )
+    }
   }
 
+  // Non-final assistant / tool messages are rendered via AgentWorkTrace groups.
   return null
 }
-
-export { shouldHideMessage }

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib/auth-types'
 import { useNavigate } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'

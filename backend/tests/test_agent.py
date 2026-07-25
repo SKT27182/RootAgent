@@ -1,4 +1,3 @@
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,13 @@ from app.services.redis_store import RedisStore
 @pytest.fixture
 def mock_redis_client():
     client = MagicMock()
-    client.rpush = AsyncMock()
+    pipeline = MagicMock()
+    pipeline.rpush = AsyncMock(return_value=pipeline)
+    pipeline.expire = AsyncMock(return_value=pipeline)
+    pipeline.execute = AsyncMock(return_value=[1, True])
+    client.pipeline.return_value.__aenter__ = AsyncMock(return_value=pipeline)
+    client.pipeline.return_value.__aexit__ = AsyncMock(return_value=None)
+    client._test_pipeline = pipeline
     client.lrange = AsyncMock(return_value=[])
     client.delete = AsyncMock(return_value=1)
     client.zadd = AsyncMock()
@@ -90,7 +95,9 @@ async def test_redis_no_function_keys(redis_store, mock_redis_client):
         "sess1",
         Message(role="user", content="hi"),
     )
-    mock_redis_client.rpush.assert_called_once()
+    mock_redis_client._test_pipeline.rpush.assert_awaited_once()
+    mock_redis_client._test_pipeline.expire.assert_awaited_once()
+    mock_redis_client._test_pipeline.execute.assert_awaited_once()
     assert not hasattr(redis_store, "save_functions")
 
 

@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { ThemeProvider } from "@/components/theme-provider";
-import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { AuthProvider } from "@/lib/auth-context";
+import { useAuth } from "@/lib/auth-types";
 import { hasAdminAccess } from "@/lib/roles";
 import Login from "@/pages/Login";
 import Chat from "@/pages/Chat";
@@ -9,7 +10,10 @@ import AdminPage from "@/pages/AdminPage";
 import SettingsPage from "@/pages/SettingsPage";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isInitializing } = useAuth();
+  if (isInitializing) {
+    return <div role="status" className="min-h-screen bg-background" />;
+  }
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }

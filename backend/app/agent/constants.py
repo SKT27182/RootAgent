@@ -3,10 +3,12 @@ AUTHORIZED_IMPORTS = [
     "datetime.*",
     "re.*",
     "json.*",
+    "io.*",
     "csv.*",
     "pandas.*",
-    "os.*",
     "matplotlib.*",
+    "PIL.*",
+    "pypdf.*",
     "seaborn.*",
     "scipy.*",
 ]

@@ -7,7 +7,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 
 from app.core.dependencies import (
@@ -21,6 +21,7 @@ from app.db.models import User, UserRole
 from app.core.config import settings
 from app.schemas.auth import UserResponse
 from app.utils.logger import create_logger
+from app.services import session_service
 
 logger = create_logger(__name__, level=settings.log_level)
 
@@ -28,9 +29,18 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
 class AdminCreateUser(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
     email: EmailStr
     password: str = Field(min_length=8)
     role: str = Field(default="USER", pattern="^(ADMIN|USER)$")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -65,6 +75,7 @@ async def create_user(
 
     user = User(
         email=user_data.email,
+        name=user_data.name.strip(),
         hashed_password=get_password_hash(user_data.password),
         role=UserRole(user_data.role),
         infra_hub_user_id=None,
@@ -118,7 +129,7 @@ async def delete_user(
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
     if not target:
-        raise HTTPException(status_code=404, detail="User not found")
+        return
 
     if is_infra_admin(target):
         raise HTTPException(
@@ -135,6 +146,5 @@ async def delete_user(
     if target.id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
-    await db.delete(target)
-    await db.commit()
+    await session_service.delete_user(db, target)
     logger.info("User deleted: %s", target.email)

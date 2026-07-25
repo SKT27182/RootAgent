@@ -1,6 +1,5 @@
 import json
 import traceback
-import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import inspect
@@ -52,18 +51,19 @@ class Agent:
     def _initialize_messages(
         self,
         query: Optional[str] = None,
-        history: List[Message] = [],
-        images: Optional[List[str]] = None,
+        history: Optional[List[Message]] = None,
         artifact_context: Optional[str] = None,
+        uploaded_artifacts: Optional[List[Dict[str, Any]]] = None,
     ) -> List[dict]:
         template = Template(SYSTEM_PROMPT_TEMPLATE)
         system_prompt = template.render(
             authorized_imports=str(AUTHORIZED_IMPORTS),
             tools=self.tools,
+            uploaded_artifacts=uploaded_artifacts or [],
         )
         messages: List[dict] = [{"role": "system", "content": system_prompt}]
 
-        for msg in history:
+        for msg in history or []:
             content = msg.content
             if content.strip().startswith("[") and (
                 "type" in content or "text" in content
@@ -78,16 +78,6 @@ class Agent:
             user_content: List[dict] = [{"type": "text", "text": query}]
             if artifact_context:
                 user_content.append({"type": "text", "text": artifact_context})
-            if images:
-                for img_str in images:
-                    url = (
-                        img_str
-                        if img_str.startswith("data:image")
-                        else f"data:image/jpeg;base64,{img_str}"
-                    )
-                    user_content.append(
-                        {"type": "image_url", "image_url": {"url": url}}
-                    )
             messages.append({"role": "user", "content": user_content})
 
         return messages
@@ -104,13 +94,13 @@ class Agent:
     async def run(
         self,
         query: Optional[str] = None,
-        images: Optional[List[str]] = None,
-        history: List[Message] = [],
+        history: Optional[List[Message]] = None,
         artifact_context: Optional[str] = None,
+        uploaded_artifacts: Optional[List[Dict[str, Any]]] = None,
         **kwargs,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         messages = self._initialize_messages(
-            query, history, images, artifact_context
+            query, history, artifact_context, uploaded_artifacts
         )
         initial_message_count = len(messages)
         step_count = 0
@@ -126,7 +116,7 @@ class Agent:
                     return answer, messages[initial_message_count:]
 
                 if step.code:
-                    observation = self.executor.execute(step.code)
+                    observation = await self.executor.execute(step.code)
                     if isinstance(observation, FinalAnswerException):
                         return str(observation.answer), messages[initial_message_count:]
                     obs_msg = f"Observation: {observation}"
@@ -153,13 +143,13 @@ class Agent:
     async def run_stream(
         self,
         query: Optional[str] = None,
-        images: Optional[List[str]] = None,
-        history: List[Message] = [],
+        history: Optional[List[Message]] = None,
         artifact_context: Optional[str] = None,
+        uploaded_artifacts: Optional[List[Dict[str, Any]]] = None,
         **kwargs,
     ):
         messages = self._initialize_messages(
-            query, history, images, artifact_context
+            query, history, artifact_context, uploaded_artifacts
         )
         step_count = 0
 
@@ -170,44 +160,71 @@ class Agent:
                 messages.append({"role": "assistant", "content": step_json})
 
                 if step.is_final_answer:
-                    yield {"type": "step", "step": step.model_dump()}
+                    yield {
+                        "type": "step",
+                        "step_index": step_count,
+                        "step": step.model_dump(),
+                    }
                     return
 
                 if step.code:
-                    observation = self.executor.execute(step.code)
-                    if isinstance(observation, FinalAnswerException):
-                        final_step = AgentStep(
-                            thinking=step.thinking,
-                            code=step.code,
-                            final_answer=str(observation.answer),
-                            is_final_answer=True,
-                        )
-                        messages[-1] = {
-                            "role": "assistant",
-                            "content": final_step.model_dump_json(),
-                        }
-                        yield {"type": "step", "step": final_step.model_dump()}
-                        return
-                    obs_msg = f"Observation: {observation}"
+                    yield {
+                        "type": "step",
+                        "step_index": step_count,
+                        "step": step.model_dump(),
+                    }
+                    try:
+                        observation = await self.executor.execute(step.code)
+                        if isinstance(observation, FinalAnswerException):
+                            final_step = AgentStep(
+                                thinking="",
+                                code=None,
+                                final_answer=str(observation.answer),
+                                is_final_answer=True,
+                            )
+                            messages.append(
+                                {"role": "assistant", "content": final_step.model_dump_json()}
+                            )
+                            yield {
+                                "type": "step",
+                                "step_index": step_count + 1,
+                                "step": final_step.model_dump(),
+                            }
+                            return
+                        obs_msg = f"Observation: {observation}"
+                    except Exception as exc:
+                        logger.error(traceback.format_exc())
+                        obs_msg = f"Execution error: {exc}"
                     messages.append({"role": "user", "content": obs_msg})
-                    yield {"type": "step", "step": step.model_dump()}
-                    yield {"type": "tool", "content": obs_msg}
+                    yield {
+                        "type": "tool",
+                        "step_index": step_count,
+                        "content": obs_msg,
+                    }
                 else:
                     err = "Error: Provide code or set is_final_answer true with final_answer."
                     messages.append({"role": "user", "content": err})
-                    yield {"type": "step", "step": step.model_dump()}
-                    yield {"type": "tool", "content": err}
+                    yield {
+                        "type": "step",
+                        "step_index": step_count,
+                        "step": step.model_dump(),
+                    }
+                    yield {
+                        "type": "tool",
+                        "step_index": step_count,
+                        "content": err,
+                    }
 
                 step_count += 1
 
             except Exception as e:
                 logger.error(traceback.format_exc())
-                yield {"type": "tool", "content": str(e)}
                 messages.append({"role": "user", "content": str(e)})
                 step_count += 1
 
         yield {
             "type": "step",
+            "step_index": step_count,
             "step": AgentStep(
                 thinking="",
                 final_answer="Agent reached maximum steps without a final answer.",

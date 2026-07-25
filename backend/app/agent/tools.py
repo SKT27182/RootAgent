@@ -4,44 +4,23 @@ These functions are available to the LLM during code execution.
 """
 
 from __future__ import annotations
-import io
-import base64
-from typing import Any, List, Optional
-from pydantic import BaseModel, HttpUrl
 
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 from urllib.parse import urlparse
 from tavily import TavilyClient
 
 from app.core.config import settings
+from app.services.artifact_gateway import (
+    delete_artifact,
+    list_artifacts,
+    read_artifact,
+    save_artifact,
+)
 from app.utils.logger import create_logger
 
 logger = create_logger(__name__, level=settings.log_level)
-
-## Figure to Base64 Tool
-
-
-def figure_to_base64(fig: Any) -> str:
-    """
-    Convert a matplotlib figure to a base64-encoded PNG string.
-
-    Args:
-        fig: A matplotlib figure object (e.g., from plt.gcf() or plt.figure())
-
-    Returns:
-        A base64-encoded string of the PNG image.
-
-    Example usage in LLM code:
-        import matplotlib.pyplot as plt
-        plt.plot([1, 2, 3], [4, 5, 6])
-        result = figure_to_base64(plt.gcf())
-    """
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", dpi=150)
-    buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode("utf-8")
-    buf.close()
-    return f"![Generated Image](data:image/png;base64,{img_base64})"
-
 
 ## Web Search Tool
 
@@ -198,6 +177,9 @@ def web_search(query: str, recency_days: Optional[int] = None) -> List[Dict[str,
 
 # Dictionary of all tools to pass to the agent
 AGENT_TOOLS = {
-    "figure_to_base64": figure_to_base64,
+    "list_artifacts": list_artifacts,
+    "read_artifact": read_artifact,
+    "save_artifact": save_artifact,
+    "delete_artifact": delete_artifact,
     "web_search": web_search,
 }

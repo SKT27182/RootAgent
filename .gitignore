@@ -9,3 +9,7 @@ antigravity.json
 *.pyc
 data
 frontend_old
+.pnpm-store/
+.coverage
+coverage.xml
+htmlcov/

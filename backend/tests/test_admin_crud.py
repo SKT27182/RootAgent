@@ -17,6 +17,34 @@ def test_user_role_values():
 
 
 @pytest.mark.asyncio
+async def test_create_user_persists_name():
+    current = User(
+        id=uuid.uuid4(),
+        email="infra@local.com",
+        name="Infra Admin",
+        hashed_password="x",
+        role=UserRole.INFRA_ADMIN,
+    )
+    body = admin_router.AdminCreateUser(
+        name="  New User  ",
+        email="new@local.com",
+        password="password123",
+        role="USER",
+    )
+    result = MagicMock(scalar_one_or_none=lambda: None)
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    created = await admin_router.create_user(body, db, current)
+
+    assert created.name == "New User"
+    db.add.assert_called_once_with(created)
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_create_user_rejects_admin_from_app_admin():
     """APP ADMIN cannot create ADMIN accounts."""
     current = User(
@@ -26,6 +54,7 @@ async def test_create_user_rejects_admin_from_app_admin():
         role=UserRole.ADMIN,
     )
     body = admin_router.AdminCreateUser(
+        name="New User",
         email="new@local.com",
         password="password123",
         role="ADMIN",

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Settings, User, Palette, Key, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,10 +9,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { useTheme } from '@/components/theme-provider'
+import { useTheme } from '@/lib/theme-context'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { AccentPicker } from '@/components/AccentPicker'
-import { useAuth } from '@/lib/auth-context'
+import { useAuth } from '@/lib/auth-types'
 import { updateProfile, changePassword } from '@/api'
 import { userDisplayName, userInitial } from '@/lib/display'
 import { SettingsShell } from '@/components/layout/SettingsShell'
@@ -35,10 +35,6 @@ export default function SettingsPage() {
   const [passwordSuccess, setPasswordSuccess] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
-
-  useEffect(() => {
-    setName(user?.name ?? '')
-  }, [user?.name])
 
   const tabs = [
     { id: 'profile' as const, label: 'Profile', icon: User },

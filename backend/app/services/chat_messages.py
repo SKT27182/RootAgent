@@ -13,30 +13,33 @@ def message_for_user(content: str, *, timestamp: datetime | None = None) -> Mess
         role="user",
         content=content,
         timestamp=now,
-        is_reasoning=False,
         step_kind="user",
     )
 
 
-def message_for_assistant(step: AgentStep, *, timestamp: datetime | None = None) -> Message:
+def message_for_assistant(
+    step: AgentStep, *, step_index: int | None = None, timestamp: datetime | None = None
+) -> Message:
     now = timestamp or datetime.now(timezone.utc)
     return Message(
         role="assistant",
         content=step.model_dump_json(),
         timestamp=now,
-        is_reasoning=not step.is_final_answer,
         step_kind="assistant",
+        step_index=step_index,
     )
 
 
-def message_for_tool(output: str, *, timestamp: datetime | None = None) -> Message:
+def message_for_tool(
+    output: str, *, step_index: int | None = None, timestamp: datetime | None = None
+) -> Message:
     now = timestamp or datetime.now(timezone.utc)
     return Message(
         role="assistant",
         content=json.dumps({"output": output}),
         timestamp=now,
-        is_reasoning=True,
         step_kind="tool",
+        step_index=step_index,
     )
 
 
@@ -52,27 +55,30 @@ def parse_tool_output(content: str) -> str:
 
 
 def history_for_agent(messages: list[Message]) -> list[Message]:
-    """Map stored user/assistant/tool rows to LLM conversation format."""
+    """Project stored trace history to prior user text and final answers only.
+
+    The complete structured trace remains available to the UI in Redis, but code,
+    thinking, observations, artifact identifiers, and executor paths never re-enter
+    a later LLM request.
+    """
     result: list[Message] = []
     for msg in messages:
         if msg.step_kind == "user":
-            result.append(msg)
+            result.append(msg.model_copy(update={"artifact_ids": []}))
         elif msg.step_kind == "assistant":
-            result.append(
-                Message(
-                    role="assistant",
-                    content=msg.content,
-                    timestamp=msg.timestamp,
-                    is_reasoning=msg.is_reasoning,
+            try:
+                step = parse_assistant_step(msg.content)
+            except Exception:
+                continue
+            if not step.is_final_answer:
+                continue
+            answer = step.final_answer or step.thinking
+            if answer:
+                result.append(
+                    Message(
+                        role="assistant",
+                        content=answer,
+                        timestamp=msg.timestamp,
+                    )
                 )
-            )
-        elif msg.step_kind == "tool":
-            result.append(
-                Message(
-                    role="user",
-                    content=parse_tool_output(msg.content),
-                    timestamp=msg.timestamp,
-                    is_reasoning=True,
-                )
-            )
     return result

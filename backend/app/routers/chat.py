@@ -1,297 +1,317 @@
+"""Authenticated HTTP and WebSocket chat transports over ChatRunService."""
+
 import json
 import uuid
-from datetime import datetime, timezone
-from functools import lru_cache
-from typing import Annotated, List, Optional
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.agent import Agent
-from app.agent.tools import AGENT_TOOLS
 from app.core.config import settings
 from app.core.dependencies import DbSession, get_current_active_user
-from app.db.models import User
+from app.core.metrics import WS_AUTH_FAILURES
+from app.db.models import ChatRunStatus, User
 from app.db.postgres import async_session_maker
-from app.models.agent import AgentStep
-from app.models.chat import ChatRequest, ChatResponse, Message
-from app.services import artifact_service
-from app.services.chat_messages import (
-    history_for_agent,
-    message_for_assistant,
-    message_for_tool,
-    message_for_user,
+from app.models.chat import (
+    ChatErrorEvent,
+    ChatRequest,
+    ChatResponse,
+    Message,
+    SessionDeleteResponse,
+    SessionSummary,
 )
-from app.services.redis_store import RedisStore
+from app.services import session_service
+from app.services.chat_run_service import ChatRunFailure, chat_run_service
+from app.services.redis_store import RedisStore, get_redis_store
 from app.utils.logger import create_logger
-from app.utils.utils import format_user_message
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = create_logger(__name__, level=settings.log_level)
 
 
-@lru_cache()
-def get_redis_store() -> RedisStore:
-    return RedisStore()
-
-
-def _ensure_user_id(request_user_id: str, current_user: User) -> str:
-    uid = str(current_user.id)
-    if request_user_id != uid:
-        raise HTTPException(status_code=403, detail="User ID mismatch")
-    return uid
-
-
-async def _build_artifact_context(
-    db: AsyncSession,
-    user: User,
-    session_id: str,
-    artifact_ids: Optional[List[str]] = None,
-) -> str:
-    if not artifact_ids:
-        return ""
-    lines = ["Attached artifacts:"]
-    for aid_str in artifact_ids:
-        try:
-            aid = uuid.UUID(aid_str)
-        except ValueError:
-            continue
-        artifact = await artifact_service.get_artifact_for_user(
-            db, user, session_id, aid
-        )
-        if artifact:
-            lines.append(
-                f"- id={artifact.id} file={artifact.filename} "
-                f"type={artifact.content_type} path={artifact.storage_path}"
-            )
-    return "\n".join(lines) if len(lines) > 1 else ""
+def _http_failure(exc: ChatRunFailure) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={
+            "code": exc.code,
+            "message": exc.safe_message,
+            "retryable": exc.retryable,
+        },
+    )
 
 
 @router.post("/", response_model=ChatResponse)
 async def chat_endpoint(
-    request: ChatRequest,
+    body: ChatRequest,
+    request: Request,
+    response: Response,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: DbSession,
     redis_store: Annotated[RedisStore, Depends(get_redis_store)],
-):
-    user_id = _ensure_user_id(request.user_id, current_user)
-    session_id = request.session_id or str(uuid.uuid4())
-    query = request.query
-
-    if not query:
-        raise HTTPException(status_code=400, detail="Query is required")
-
-    formatted_content = format_user_message(query, request.images, request.csv_data)
-    user_message = message_for_user(json.dumps(formatted_content))
-    await redis_store.save_message(user_id, session_id, user_message)
-    await redis_store.add_user_session(user_id, session_id)
-
+) -> ChatResponse:
+    correlation_id = uuid.UUID(str(request.state.correlation_id))
     try:
-        history = history_for_agent(
-            await redis_store.get_session_history(
-                user_id, session_id, include_reasoning=True
-            )
+        result = await chat_run_service.execute(
+            body, current_user, db, redis_store, correlation_id
         )
-        artifact_context = await _build_artifact_context(
-            db, current_user, session_id, request.artifact_ids
-        )
-
-        agent = Agent(additional_functions=AGENT_TOOLS)
-        response_text, generated_steps = await agent.run(
-            query=None,
-            history=history,
-            artifact_context=artifact_context or None,
-        )
-
-        try:
-            await artifact_service.save_generated_images_from_text(
-                db, current_user, session_id, response_text
-            )
-        except Exception as gen_err:
-            logger.warning(f"Could not persist generated images: {gen_err}")
-
-        last_assistant: Message | None = None
-        for step_msg in generated_steps:
-            role = step_msg.get("role", "assistant")
-            content_str = step_msg.get("content", "")
-            if not isinstance(content_str, str):
-                content_str = json.dumps(content_str)
-
-            if role == "assistant":
-                step = AgentStep.model_validate_json(content_str)
-                stored = message_for_assistant(step)
-                await redis_store.save_message(user_id, session_id, stored)
-                last_assistant = stored
-            elif role == "user":
-                await redis_store.save_message(
-                    user_id, session_id, message_for_tool(content_str)
-                )
-
-        if last_assistant is None:
-            raise HTTPException(status_code=500, detail="Agent produced no response")
-
-        return ChatResponse(
-            response=response_text,
-            session_id=session_id,
-            message_id=last_assistant.message_id,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    except ChatRunFailure as exc:
+        raise _http_failure(exc) from exc
+    if result.status == ChatRunStatus.RUNNING:
+        response.status_code = 202
+    return result
 
 
-@router.get("/history/{user_id}/{session_id}", response_model=List[Message])
-async def get_history(
-    user_id: str,
-    session_id: str,
+@router.get("/runs/{request_id}", response_model=ChatResponse)
+async def get_run(
+    request_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: DbSession,
+) -> ChatResponse:
+    result = await chat_run_service.get_run(db, current_user.id, request_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Chat run not found")
+    return result
+
+
+@router.get("/history/{session_id}", response_model=list[Message])
+async def get_history(
+    session_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: DbSession,
     redis_store: Annotated[RedisStore, Depends(get_redis_store)],
-    include_reasoning: bool = False,
-):
-    _ensure_user_id(user_id, current_user)
+) -> list[Message]:
+    if await session_service.get_owned_session(db, current_user.id, session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
     return await redis_store.get_session_history(
-        user_id, session_id, include_reasoning=include_reasoning, last_n=-1
+        str(current_user.id),
+        str(session_id),
+        last_n=-1,
     )
 
 
-@router.get("/sessions/{user_id}", response_model=List[str])
+@router.get("/sessions", response_model=list[SessionSummary])
 async def get_sessions(
-    user_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
-    redis_store: Annotated[RedisStore, Depends(get_redis_store)],
-):
-    _ensure_user_id(user_id, current_user)
-    return await redis_store.get_user_sessions(user_id)
+    db: DbSession,
+) -> list[SessionSummary]:
+    sessions = await session_service.list_sessions(db, current_user.id)
+    return [
+        SessionSummary(
+            session_id=session.session_id,
+            deletion_pending=session.deletion_requested_at is not None,
+        )
+        for session in sessions
+    ]
 
 
-@router.delete("/sessions/{user_id}/{session_id}")
+@router.post("/sessions", response_model=SessionSummary, status_code=201)
+async def create_session(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: DbSession,
+) -> SessionSummary:
+    """Create an empty owned chat so uploads can happen before the first message."""
+    chat = await session_service.resolve_run_session(db, current_user.id, None)
+    if chat is None:
+        raise HTTPException(status_code=500, detail="Could not create session")
+    return SessionSummary(session_id=chat.session_id, deletion_pending=False)
+
+
+@router.delete("/sessions/{session_id}", response_model=SessionDeleteResponse)
 async def delete_session(
-    user_id: str,
-    session_id: str,
+    session_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: DbSession,
     redis_store: Annotated[RedisStore, Depends(get_redis_store)],
-):
-    _ensure_user_id(user_id, current_user)
-    deleted = await redis_store.delete_session(user_id, session_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"message": f"Session {session_id} deleted successfully"}
+    response: Response,
+) -> SessionDeleteResponse:
+    chat = await session_service.get_owned_session(db, current_user.id, session_id)
+    if chat is None:
+        return SessionDeleteResponse(status="deleted")
+    token = await redis_store.acquire_run_lock(
+        str(current_user.id), str(session_id)
+    )
+    if token is None:
+        await session_service.request_session_deletion(db, chat)
+        response.status_code = 202
+        return SessionDeleteResponse(status="pending")
+    try:
+        await session_service.delete_session(db, current_user.id, session_id)
+    finally:
+        await redis_store.release_run_lock(
+            str(current_user.id), str(session_id), token
+        )
+    return SessionDeleteResponse(status="deleted")
 
 
-@router.delete("/message/{user_id}/{session_id}/{message_id}")
+@router.delete("/message/{session_id}/{message_id}")
 async def delete_message(
-    user_id: str,
-    session_id: str,
-    message_id: str,
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: DbSession,
     redis_store: Annotated[RedisStore, Depends(get_redis_store)],
-):
-    _ensure_user_id(user_id, current_user)
-    deleted = await redis_store.delete_message(user_id, session_id, message_id)
+) -> dict[str, str]:
+    if await session_service.get_owned_session(db, current_user.id, session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    deleted = await redis_store.delete_message(
+        str(current_user.id), str(session_id), str(message_id)
+    )
     if not deleted:
         raise HTTPException(status_code=404, detail="Message not found")
     return {"message": f"Message {message_id} deleted successfully"}
+
+
+async def _send_ws_error(
+    websocket: WebSocket,
+    *,
+    code: str,
+    message: str,
+    correlation_id: uuid.UUID,
+    retryable: bool = False,
+    run_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
+) -> None:
+    event = ChatErrorEvent(
+        run_id=run_id,
+        session_id=session_id,
+        code=code,
+        message=message,
+        correlation_id=correlation_id,
+        retryable=retryable,
+    )
+    await websocket.send_json(event.model_dump(mode="json"))
+
+
+def _origin_is_allowed(origin: str | None) -> bool:
+    if not origin:
+        return False
+    allowed = {value.rstrip("/") for value in settings.cors_origins_list}
+    return origin.rstrip("/") in allowed
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
     redis_store: Annotated[RedisStore, Depends(get_redis_store)],
-):
-    await websocket.accept()
+    ticket: str | None = None,
+) -> None:
+    correlation_id = uuid.uuid4()
+    accepted = False
     try:
-        data = await websocket.receive_text()
-        request_data = json.loads(data)
-
-        query = request_data.get("query")
-        user_id = request_data.get("user_id")
-        session_id = request_data.get("session_id")
-        include_reasoning = request_data.get("include_reasoning", True)
-        images = request_data.get("images")
-        csv_data = request_data.get("csv_data")
-        artifact_ids = request_data.get("artifact_ids")
-
-        if not query or not user_id:
-            await websocket.send_json(
-                {"type": "error", "content": "Query and User ID are required"}
+        origin = websocket.headers.get("origin")
+        if not _origin_is_allowed(origin):
+            WS_AUTH_FAILURES.labels("origin").inc()
+            logger.warning(
+                "WebSocket rejected: invalid origin correlation_id=%s origin=%r",
+                correlation_id,
+                origin,
             )
+            await websocket.close(code=1008, reason="WebSocket origin rejected")
             return
 
-        if not session_id:
-            session_id = str(uuid.uuid4())
-            await websocket.send_json(
-                {
-                    "type": "info",
-                    "content": "New session created",
-                    "session_id": session_id,
-                }
+        user_id = await redis_store.consume_ws_ticket(ticket or "")
+        if user_id is None:
+            WS_AUTH_FAILURES.labels("ticket").inc()
+            logger.warning(
+                "WebSocket rejected: invalid ticket correlation_id=%s", correlation_id
             )
-
-        formatted_content = format_user_message(query, images, csv_data)
-        user_message = message_for_user(json.dumps(formatted_content))
-        await redis_store.add_user_session(user_id, session_id)
-        await redis_store.save_message(user_id, session_id, user_message)
-
-        history = history_for_agent(
-            await redis_store.get_session_history(
-                user_id, session_id, include_reasoning=include_reasoning
-            )
-        )
-
-        artifact_context = ""
-        if artifact_ids:
-            artifact_context = f"Artifact IDs for this chat: {', '.join(artifact_ids)}"
-
-        agent = Agent(additional_functions=AGENT_TOOLS)
-        final_answer = ""
-
-        async for event in agent.run_stream(
-            query=None,
-            history=history,
-            artifact_context=artifact_context or None,
-        ):
-            await websocket.send_json(event)
-
-            if event["type"] == "step":
-                step = AgentStep.model_validate(event["step"])
-                await redis_store.save_message(
-                    user_id, session_id, message_for_assistant(step)
-                )
-                if step.is_final_answer:
-                    final_answer = step.final_answer or step.thinking
-            elif event["type"] == "tool":
-                await redis_store.save_message(
-                    user_id,
-                    session_id,
-                    message_for_tool(event.get("content", "")),
-                )
-
-        if final_answer:
-            try:
-                async with async_session_maker() as ws_db:
-                    result = await ws_db.execute(
-                        select(User).where(User.id == uuid.UUID(user_id))
-                    )
-                    ws_user = result.scalar_one_or_none()
-                    if ws_user:
-                        await artifact_service.save_generated_images_from_text(
-                            ws_db, ws_user, session_id, final_answer
-                        )
-                        await ws_db.commit()
-            except Exception as gen_err:
-                logger.warning(f"WS generated image save failed: {gen_err}")
-
-        await websocket.close()
-
-    except WebSocketDisconnect:
-        logger.info("Client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket Error: {e}")
+            await websocket.close(code=1008, reason="WebSocket authentication failed")
+            return
         try:
-            await websocket.send_json({"type": "error", "content": str(e)})
-            await websocket.close()
-        except Exception:
-            pass
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            WS_AUTH_FAILURES.labels("identity").inc()
+            await websocket.close(code=1008, reason="WebSocket authentication failed")
+            return
+
+        async with async_session_maker() as db:
+            result = await db.execute(select(User).where(User.id == user_uuid))
+            user = result.scalar_one_or_none()
+            if user is None:
+                WS_AUTH_FAILURES.labels("user_not_found").inc()
+                await websocket.close(
+                    code=1008, reason="WebSocket authentication failed"
+                )
+                return
+
+            await websocket.accept()
+            accepted = True
+            try:
+                body = ChatRequest.model_validate_json(await websocket.receive_text())
+            except (ValidationError, ValueError, json.JSONDecodeError):
+                await _send_ws_error(
+                    websocket,
+                    code="invalid_request",
+                    message="The chat request is malformed or invalid",
+                    correlation_id=correlation_id,
+                )
+                return
+
+            async def send_event(event: object) -> None:
+                await websocket.send_json(event.model_dump(mode="json"))  # type: ignore[attr-defined]
+
+            try:
+                run = await chat_run_service.execute(
+                    body,
+                    user,
+                    db,
+                    redis_store,
+                    correlation_id,
+                    event_sink=send_event,
+                )
+            except ChatRunFailure as exc:
+                await _send_ws_error(
+                    websocket,
+                    code=exc.code,
+                    message=exc.safe_message,
+                    correlation_id=correlation_id,
+                    retryable=exc.retryable,
+                    run_id=exc.run_id,
+                    session_id=exc.session_id,
+                )
+                return
+            if run.status == ChatRunStatus.RUNNING:
+                await _send_ws_error(
+                    websocket,
+                    code="run_in_progress",
+                    message="The request is already in progress",
+                    correlation_id=correlation_id,
+                    retryable=True,
+                    run_id=run.run_id,
+                    session_id=run.session_id,
+                )
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected correlation_id=%s", correlation_id)
+    except Exception:
+        logger.exception("WebSocket failure correlation_id=%s", correlation_id)
+        if accepted:
+            try:
+                await _send_ws_error(
+                    websocket,
+                    code="internal_error",
+                    message="The chat run could not be completed",
+                    correlation_id=correlation_id,
+                    retryable=True,
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                await websocket.close(code=1011, reason="WebSocket unavailable")
+            except Exception:
+                pass
+    finally:
+        if accepted:
+            try:
+                await websocket.close()
+            except Exception:
+                pass

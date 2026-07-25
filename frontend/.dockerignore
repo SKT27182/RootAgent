@@ -1,4 +1,12 @@
 node_modules
 dist
 .env
+.env.*
+!.env.example
 .git
+.pnpm-store
+coverage
+*.log
+*.pem
+*.key
+*.crt

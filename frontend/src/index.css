@@ -5,54 +5,51 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --foreground: 260 20% 10%;
+    --card: 0 0% 98%;
+    --card-foreground: 260 20% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
-  }
- 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 6%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 217.2 91.2% 59.8%;
-    --chat-user-bg: hsl(var(--primary));
+    --popover-foreground: 260 20% 10%;
+    --primary: 265 75% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 260 15% 94%;
+    --secondary-foreground: 260 20% 15%;
+    --muted: 260 15% 94%;
+    --muted-foreground: 260 10% 45%;
+    --accent: 265 60% 95%;
+    --accent-foreground: 265 75% 45%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 260 12% 90%;
+    --input: 260 12% 90%;
+    --ring: 265 75% 56%;
+    --radius: 0.75rem;
+    --chat-user-bg: hsl(265 75% 56%);
     --chat-assistant-bg: hsl(var(--card));
     --chat-assistant-fg: hsl(var(--card-foreground));
   }
-
-  :root {
-    --chat-user-bg: hsl(var(--primary));
+ 
+  .dark {
+    --background: 265 18% 7%;
+    --foreground: 260 15% 94%;
+    --card: 265 16% 10%;
+    --card-foreground: 260 15% 94%;
+    --popover: 265 18% 7%;
+    --popover-foreground: 260 15% 94%;
+    --primary: 265 85% 65%;
+    --primary-foreground: 265 25% 10%;
+    --secondary: 265 14% 15%;
+    --secondary-foreground: 260 15% 94%;
+    --muted: 265 14% 15%;
+    --muted-foreground: 260 10% 65%;
+    --accent: 265 20% 18%;
+    --accent-foreground: 260 15% 94%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 265 14% 16%;
+    --input: 265 14% 16%;
+    --ring: 265 85% 65%;
+    --chat-user-bg: hsl(265 20% 18%);
     --chat-assistant-bg: hsl(var(--card));
     --chat-assistant-fg: hsl(var(--card-foreground));
   }
@@ -63,6 +60,27 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased selection:bg-primary/20 selection:text-primary;
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+/* Custom scrollbars for a clean look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 140, 160, 0.2);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 160, 0.4);
+}
+

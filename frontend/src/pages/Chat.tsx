@@ -1,257 +1,408 @@
-import { useState, useEffect, useRef } from 'react'
-import { cn } from '@/lib/utils'
-import type { Message as MessageType } from '@/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  getSessions,
+  createSession,
+  deleteArtifact,
   deleteSession,
+  downloadArtifact,
+  getClientError,
   getHistory,
+  getSessions,
   listArtifacts,
   uploadArtifact,
-  deleteArtifact,
   type ArtifactItem,
+  type SessionSummary,
 } from '@/api'
-import { useChatWebSocket } from '@/hooks/useChatWebSocket'
-import { normalizeHistoryMessages } from '@/lib/parse-history'
-import { useAuth } from '@/lib/auth-context'
-import { userDisplayName, userInitial } from '@/lib/display'
-import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { ChatMain } from '@/components/chat/ChatMain'
 import { ControlPanel } from '@/components/chat/ControlPanel'
+import { useChatWebSocket } from '@/hooks/useChatWebSocket'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
+import {
+  validateArtifactUpload,
+} from '@/lib/artifacts'
+import { useAuth } from '@/lib/auth-types'
+import { userDisplayName, userInitial } from '@/lib/display'
+import type { DoneEvent, ErrorEvent, RunStartedEvent, StepEvent, ToolEvent } from '@/lib/chat-protocol'
+import { normalizeHistoryMessages, traceOnlyStep } from '@/lib/parse-history'
+import { cn } from '@/lib/utils'
+import type { Message as MessageType } from '@/types'
 
 export default function Chat() {
   const { user, logout } = useAuth()
-  const userId = user?.id || 'anonymous'
-  const [sessions, setSessions] = useState<string[]>([])
+  const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageType[]>([])
   const [input, setInput] = useState('')
-  const [useReasoning, setUseReasoning] = useState(true)
-  const [showReasoning, setShowReasoning] = useState(true)
   const [isStreaming, setIsStreaming] = useState(false)
   const [chatError, setChatError] = useState('')
-  useDocumentTitle('Chat — RootAgent')
-
-  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false)
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false)
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  )
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  )
+  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
+  const [artifactStatus, setArtifactStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [artifactOperationError, setArtifactOperationError] = useState('')
+  const [artifactReload, setArtifactReload] = useState(0)
+  const currentSessionDeleting = sessions.some(
+    (session) => session.session_id === currentSessionId && session.deletion_pending
+  )
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const imageInputRef = useRef<HTMLInputElement>(null)
   const artifactInputRef = useRef<HTMLInputElement>(null)
-  const [csvFile, setCsvFile] = useState<{ name: string; content: string } | null>(null)
-  const [images, setImages] = useState<{ name: string; base64: string }[]>([])
-  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
-  const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([])
+  const sessionLoadGeneration = useRef(0)
+  const currentSessionRef = useRef<string | null>(null)
+  const skipSessionLoadRef = useRef<string | null>(null)
+  useDocumentTitle('Chat — RootAgent')
 
-  const appendStepMessage = (msg: MessageType) => {
-    setMessages((prev) => [...prev, msg])
-  }
+  const refreshSessions = useCallback(async (signal?: AbortSignal) => {
+    try {
+      setSessions(await getSessions(signal))
+    } catch (error) {
+      if (!signal?.aborted) console.error('Failed to load sessions', error)
+    }
+  }, [])
 
-  const { send: sendWsChat } = useChatWebSocket({
-    onStep: appendStepMessage,
-    onSessionId: (id) => {
-      if (!currentSessionId) {
-        setCurrentSessionId(id)
-        void refreshSessions()
-      }
+  const selectSession = useCallback(
+    (sessionId: string | null) => {
+      if (isStreaming) return
+      skipSessionLoadRef.current = null
+      currentSessionRef.current = sessionId
+      setCurrentSessionId(sessionId)
+      setMessages([])
+      setArtifacts([])
+      setArtifactOperationError('')
+      setArtifactStatus(sessionId ? 'loading' : 'idle')
     },
-    onError: (message) => setChatError(message),
-    onDone: () => setIsStreaming(false),
+    [isStreaming]
+  )
+
+  const handleRunStarted = useCallback((event: RunStartedEvent) => {
+    if (currentSessionRef.current !== event.session_id) {
+      skipSessionLoadRef.current = event.session_id
+      setArtifactStatus('idle')
+      currentSessionRef.current = event.session_id
+      setCurrentSessionId(event.session_id)
+    }
+    void refreshSessions()
+  }, [refreshSessions])
+
+  const handleStep = useCallback((event: StepEvent) => {
+    // `done` remains the sole source of the final answer. Preserve thinking and
+    // code carried by the persisted final step as a separate trace card.
+    const displayedStep = event.step.is_final_answer
+      ? traceOnlyStep(event.step)
+      : event.step
+    if (!displayedStep) return
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: 'assistant',
+        content: JSON.stringify(displayedStep),
+        step_kind: 'assistant',
+        timestamp: new Date().toISOString(),
+        message_id: `${event.run_id}:${event.step_index}:step`,
+        step_index: event.step_index,
+      },
+    ])
+  }, [])
+
+  const handleTool = useCallback((event: ToolEvent) => {
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: 'assistant',
+        content: JSON.stringify({ output: event.observation }),
+        step_kind: 'tool',
+        timestamp: new Date().toISOString(),
+        message_id: `${event.run_id}:${event.step_index}:tool`,
+        step_index: event.step_index,
+      },
+    ])
+  }, [])
+
+  const handleArtifactEvent = useCallback((artifact: ArtifactItem) => {
+    setArtifacts((previous) => [artifact, ...previous.filter((item) => item.id !== artifact.id)])
+  }, [])
+
+  const handleChatError = useCallback((event: ErrorEvent) => {
+    const suffix = event.correlation_id ? ` (reference ${event.correlation_id})` : ''
+    setChatError(`${event.message}${suffix}`)
+    skipSessionLoadRef.current = null
+    setIsStreaming(false)
+  }, [])
+
+  const handleChatDone = useCallback((event: DoneEvent) => {
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: 'assistant',
+        content: JSON.stringify({
+          thinking: '',
+          final_answer: event.final_answer,
+          is_final_answer: true,
+        }),
+        step_kind: 'assistant',
+        timestamp: new Date().toISOString(),
+        message_id: event.message_id,
+        artifact_ids: event.generated_artifact_ids,
+      },
+    ])
+    skipSessionLoadRef.current = null
+    setIsStreaming(false)
+    void refreshSessions()
+    const generation = ++sessionLoadGeneration.current
+    void getHistory(event.session_id)
+      .then((history) => {
+        if (
+          currentSessionRef.current === event.session_id &&
+          generation === sessionLoadGeneration.current
+        ) {
+          setMessages(normalizeHistoryMessages(history))
+        }
+      })
+      .catch((error) => {
+        // The terminal answer is already visible; a history reconciliation
+        // failure must not turn a successful run into a client-visible failure.
+        console.error('Failed to reconcile completed chat history', error)
+      })
+  }, [refreshSessions])
+
+  const { send: sendWsChat, close: closeChat } = useChatWebSocket({
+    onRunStarted: handleRunStarted,
+    onStep: handleStep,
+    onTool: handleTool,
+    onArtifact: handleArtifactEvent,
+    onError: handleChatError,
+    onDone: handleChatDone,
   })
 
   useEffect(() => {
-    if (userId !== 'anonymous') {
-      void refreshSessions()
-    }
-  }, [userId])
+    if (!user) return
+    const controller = new AbortController()
+    void getSessions(controller.signal)
+      .then(setSessions)
+      .catch((error) => {
+        if (!controller.signal.aborted) console.error('Failed to load sessions', error)
+      })
+    return () => controller.abort()
+  }, [refreshSessions, user])
 
   useEffect(() => {
-    if (currentSessionId) {
-      void loadHistory(currentSessionId)
-      void loadArtifacts(currentSessionId)
-      setIsLeftSidebarOpen(false)
-    } else {
-      setMessages([])
-      setArtifacts([])
-      setSelectedArtifactIds([])
-    }
-  }, [currentSessionId])
+    if (!sessions.some((session) => session.deletion_pending)) return
+    const timer = window.setInterval(() => void refreshSessions(), 1_000)
+    return () => window.clearInterval(timer)
+  }, [refreshSessions, sessions])
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages, isStreaming, showReasoning])
-
-  const scrollToBottom = () => {
-    setTimeout(() => {
-      scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, 100)
-  }
-
-  const refreshSessions = async () => {
-    try {
-      const sess = await getSessions(userId)
-      setSessions(sess)
-    } catch (error) {
-      console.error('Failed to load sessions', error)
+    if (
+      currentSessionId &&
+      sessions.length > 0 &&
+      !sessions.some((session) => session.session_id === currentSessionId) &&
+      !isStreaming
+    ) {
+      const timer = window.setTimeout(() => selectSession(null), 0)
+      return () => window.clearTimeout(timer)
     }
-  }
+  }, [currentSessionId, isStreaming, selectSession, sessions])
 
-  const loadHistory = async (sessionId: string) => {
-    try {
-      const hist = await getHistory(userId, sessionId, true)
-      setMessages(normalizeHistoryMessages(hist))
-    } catch (error) {
-      console.error('Failed to load history', error)
-    }
-  }
+  useEffect(() => {
+    if (!currentSessionId) return
+    const skipHistory =
+      skipSessionLoadRef.current === currentSessionId || isStreaming
+    const controller = new AbortController()
+    const generation = ++sessionLoadGeneration.current
 
-  const loadArtifacts = async (sessionId: string) => {
-    try {
-      const items = await listArtifacts(sessionId)
-      setArtifacts(items)
-    } catch (error) {
-      console.error('Failed to load artifacts', error)
+    // Keep skipSessionLoadRef set for the whole first-run stream so React
+    // StrictMode remounts cannot clear it and wipe live WebSocket bubbles.
+    if (!skipHistory) {
+      void getHistory(currentSessionId, controller.signal)
+        .then((history) => {
+          if (!controller.signal.aborted && generation === sessionLoadGeneration.current) {
+            setMessages(normalizeHistoryMessages(history))
+          }
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) {
+            console.error('Failed to load history', error)
+            setChatError('Could not load this chat history.')
+          }
+        })
     }
-  }
+
+    void listArtifacts(currentSessionId, controller.signal)
+      .then((items) => {
+        if (controller.signal.aborted || generation !== sessionLoadGeneration.current) return
+        setArtifacts(items)
+        setArtifactStatus('idle')
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.error('Failed to load artifacts', error)
+          setArtifactStatus('error')
+        }
+      })
+
+    return () => controller.abort()
+  }, [currentSessionId, artifactReload, isStreaming])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+    return () => window.clearTimeout(timer)
+  }, [messages, isStreaming])
 
   const handleCreateSession = () => {
-    setCurrentSessionId(null)
-    setMessages([])
-    setIsLeftSidebarOpen(false)
-  }
-
-  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (confirm('Are you sure you want to delete this session?')) {
-      await deleteSession(userId, sessionId)
-      await refreshSessions()
-      if (currentSessionId === sessionId) {
-        setCurrentSessionId(null)
-        setMessages([])
-      }
+    selectSession(null)
+    if (window.innerWidth < 768) {
+      setIsLeftSidebarOpen(false)
     }
   }
 
-  const handleCopySessionId = (sessionId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    if (!window.confirm('Are you sure you want to delete this session?')) return
+    try {
+      const result = await deleteSession(sessionId)
+      await refreshSessions()
+      if (result.status === 'deleted' && currentSessionId === sessionId) selectSession(null)
+    } catch (error) {
+      setChatError(getClientError(error).message)
+    }
+  }
+
+  const handleCopySessionId = (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
     void navigator.clipboard.writeText(sessionId)
   }
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    e.target.value = ''
+  const ensureSession = useCallback(async (): Promise<string> => {
+    if (currentSessionRef.current) return currentSessionRef.current
+    const created = await createSession()
+    skipSessionLoadRef.current = created.session_id
+    currentSessionRef.current = created.session_id
+    setCurrentSessionId(created.session_id)
+    setArtifactStatus('idle')
+    await refreshSessions()
+    return created.session_id
+  }, [refreshSessions])
 
-    if (!currentSessionId) {
-      alert('Send a message first to create a session, then upload files.')
+  const handleArtifactUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || isStreaming || currentSessionDeleting) return
+    const validation = validateArtifactUpload(file)
+    if (!validation.ok) {
+      setArtifactOperationError(validation.message)
       return
     }
-
+    setArtifactOperationError('')
     try {
-      const artifact = await uploadArtifact(currentSessionId, file)
-      setArtifacts((prev) => [artifact, ...prev])
-      setSelectedArtifactIds((prev) => [...prev, artifact.id])
-      if (file.type === 'text/csv' || file.name.endsWith('.csv')) {
-        const reader = new FileReader()
-        reader.onload = (ev) => {
-          const content = ev.target?.result as string
-          setCsvFile({ name: file.name, content })
-        }
-        reader.readAsText(file)
-      }
+      const sessionId = await ensureSession()
+      const artifact = await uploadArtifact(sessionId, file)
+      setArtifacts((previous) => [artifact, ...previous.filter((item) => item.id !== artifact.id)])
     } catch (error) {
-      console.error('Upload failed', error)
-      alert('Failed to upload file')
+      setArtifactOperationError(getClientError(error).message)
     }
   }
 
-  const handleArtifactUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !currentSessionId) return
-    e.target.value = ''
+  const handleDeleteArtifact = async (artifact: ArtifactItem) => {
+    if (!currentSessionId || isStreaming) return
+    setArtifactOperationError('')
     try {
-      const artifact = await uploadArtifact(currentSessionId, file)
-      setArtifacts((prev) => [artifact, ...prev])
-      setSelectedArtifactIds((prev) => [...prev, artifact.id])
+      await deleteArtifact(currentSessionId, artifact.id)
+      setArtifacts((previous) => previous.filter((item) => item.id !== artifact.id))
     } catch (error) {
-      console.error('Artifact upload failed', error)
+      setArtifactOperationError(getClientError(error).message)
     }
   }
 
-  const handleDeleteArtifact = async (artifactId: string) => {
-    if (!currentSessionId) return
-    await deleteArtifact(currentSessionId, artifactId)
-    setArtifacts((prev) => prev.filter((a) => a.id !== artifactId))
-    setSelectedArtifactIds((prev) => prev.filter((id) => id !== artifactId))
-  }
-
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (files) {
-      Array.from(files).forEach((file) => {
-        if (!file.type.startsWith('image/')) {
-          alert('Please upload image files only')
-          return
-        }
-        const reader = new FileReader()
-        reader.onload = (event) => {
-          const base64 = event.target?.result as string
-          setImages((prev) => [...prev, { name: file.name, base64 }])
-        }
-        reader.readAsDataURL(file)
-      })
+  const handleDownloadArtifact = async (artifact: ArtifactItem) => {
+    setArtifactOperationError('')
+    try {
+      await downloadArtifact(artifact)
+    } catch (error) {
+      setArtifactOperationError(getClientError(error).message)
     }
-    e.target.value = ''
   }
 
   const sendMessage = () => {
-    if (!input.trim() || isStreaming) return
-
+    const query = input.trim()
+    if (!query || isStreaming || currentSessionDeleting) return
     const payload = {
-      query: input,
-      user_id: userId,
+      request_id: crypto.randomUUID(),
+      query: query.slice(0, 20_000),
       session_id: currentSessionId,
-      include_reasoning: useReasoning,
-      images: images.length > 0 ? images.map((img) => img.base64) : null,
-      csv_data: csvFile ? csvFile.content : null,
-      artifact_ids: selectedArtifactIds.length > 0 ? selectedArtifactIds : null,
     }
-
-    const attachmentInfo = [
-      csvFile ? `[CSV: ${csvFile.name}]` : '',
-      images.length > 0 ? `[${images.length} image(s)]` : '',
-    ]
-      .filter(Boolean)
-      .join(' ')
-
-    const userMsg: MessageType = {
-      role: 'user',
-      content: input + (attachmentInfo ? `\n\n${attachmentInfo}` : ''),
-      step_kind: 'user',
-      timestamp: new Date().toISOString(),
-    }
-    setMessages((prev) => [...prev, userMsg])
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: 'user',
+        content: query,
+        step_kind: 'user',
+        timestamp: new Date().toISOString(),
+      },
+    ])
     setInput('')
-    setCsvFile(null)
-    setImages([])
     setChatError('')
     setIsStreaming(true)
     void sendWsChat(payload)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
       sendMessage()
     }
   }
 
+  const [leftWidth, setLeftWidth] = useState(260)
+  const [rightWidth, setRightWidth] = useState(280)
+  const [isResizingLeft, setIsResizingLeft] = useState(false)
+  const [isResizingRight, setIsResizingRight] = useState(false)
+
+  useEffect(() => {
+    if (!isResizingLeft && !isResizingRight) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingLeft) {
+        const newWidth = Math.max(180, Math.min(500, e.clientX))
+        setLeftWidth(newWidth)
+      } else if (isResizingRight) {
+        const newWidth = Math.max(200, Math.min(500, window.innerWidth - e.clientX))
+        setRightWidth(newWidth)
+      }
+    }
+
+    const handleMouseUp = () => {
+      setIsResizingLeft(false)
+      setIsResizingRight(false)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isResizingLeft, isResizingRight])
+
+  const handleLogout = () => {
+    closeChat()
+    logout()
+  }
+
   return (
-    <div className="flex h-[100dvh] w-full bg-background text-foreground overflow-hidden relative">
+    <div
+      className={cn(
+        'relative flex h-[100dvh] w-full overflow-hidden bg-background text-foreground',
+        (isResizingLeft || isResizingRight) && 'select-none cursor-col-resize'
+      )}
+    >
       {(isLeftSidebarOpen || isRightSidebarOpen) && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
           onClick={() => {
             setIsLeftSidebarOpen(false)
             setIsRightSidebarOpen(false)
@@ -259,45 +410,63 @@ export default function Chat() {
         />
       )}
 
-      <AppSidebar
+      <div
+        style={{ width: isLeftSidebarOpen ? `${leftWidth}px` : undefined }}
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-64 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:flex shrink-0',
-          isLeftSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          'relative shrink-0 transition-all duration-300 ease-in-out h-full',
+          isLeftSidebarOpen ? 'translate-x-0 md:block' : '-translate-x-full md:hidden'
         )}
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        displayName={userDisplayName(user)}
-        userInitial={userInitial(user)}
-        userRole={user?.role}
-        onSelectSession={setCurrentSessionId}
-        onCreateSession={handleCreateSession}
-        onDeleteSession={handleDeleteSession}
-        onCopySessionId={handleCopySessionId}
-        onLogout={logout}
-        onClose={() => setIsLeftSidebarOpen(false)}
-        showCloseButton
-      />
+      >
+        <AppSidebar
+          className="w-full h-full"
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          displayName={userDisplayName(user)}
+          userInitial={userInitial(user)}
+          userRole={user?.role}
+          isSessionMutationDisabled={isStreaming}
+          onSelectSession={(sessionId) => {
+            selectSession(sessionId)
+            if (window.innerWidth < 768) {
+              setIsLeftSidebarOpen(false)
+            }
+          }}
+          onCreateSession={handleCreateSession}
+          onDeleteSession={handleDeleteSession}
+          onCopySessionId={handleCopySessionId}
+          onLogout={handleLogout}
+          onClose={() => setIsLeftSidebarOpen(false)}
+          showCloseButton
+        />
+        {isLeftSidebarOpen && (
+          <div
+            className="hidden md:block absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/50 active:bg-primary z-50 transition-colors group"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              setIsResizingLeft(true)
+            }}
+            onDoubleClick={() => setLeftWidth(260)}
+            title="Drag to resize sidebar (double click to reset)"
+          />
+        )}
+      </div>
 
       <ChatMain
         scrollRef={scrollRef}
         messages={messages}
-        showReasoning={showReasoning}
         isStreaming={isStreaming}
+        isSessionDeleting={currentSessionDeleting}
         chatError={chatError}
         input={input}
         onInputChange={setInput}
         onSend={sendMessage}
         onKeyDown={handleKeyDown}
-        csvFile={csvFile}
-        onClearCsv={() => setCsvFile(null)}
-        images={images}
-        onRemoveImage={(idx) =>
-          setImages((prev) => prev.filter((_, i) => i !== idx))
-        }
-        fileInputRef={fileInputRef}
-        imageInputRef={imageInputRef}
-        onFileSelect={handleFileSelect}
-        onImageSelect={handleImageSelect}
+        canUpload={!isStreaming && !currentSessionDeleting}
+        onUploadClick={() => artifactInputRef.current?.click()}
+        isLeftSidebarOpen={isLeftSidebarOpen}
+        isRightSidebarOpen={isRightSidebarOpen}
+        onToggleLeftSidebar={() => setIsLeftSidebarOpen((prev) => !prev)}
+        onToggleRightSidebar={() => setIsRightSidebarOpen((prev) => !prev)}
         onOpenLeftSidebar={() => setIsLeftSidebarOpen(true)}
         onOpenRightSidebar={() => setIsRightSidebarOpen(true)}
       />
@@ -306,29 +475,48 @@ export default function Chat() {
         type="file"
         ref={artifactInputRef}
         className="hidden"
+        accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={handleArtifactUpload}
       />
 
-      <ControlPanel
+      <div
+        style={{ width: isRightSidebarOpen ? `${rightWidth}px` : undefined }}
         className={cn(
-          'fixed inset-y-0 right-0 z-50 w-72 transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:flex shrink-0',
-          isRightSidebarOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
+          'relative shrink-0 transition-all duration-300 ease-in-out h-full',
+          isRightSidebarOpen ? 'translate-x-0 md:block' : 'translate-x-full md:hidden'
         )}
-        showCloseButton
-        onClose={() => setIsRightSidebarOpen(false)}
-        useReasoning={useReasoning}
-        onUseReasoningChange={setUseReasoning}
-        showReasoning={showReasoning}
-        onShowReasoningChange={setShowReasoning}
-        currentSessionId={currentSessionId}
-        artifacts={artifacts}
-        selectedArtifactIds={selectedArtifactIds}
-        onSelectedArtifactIdsChange={setSelectedArtifactIds}
-        onArtifactUploadClick={() => artifactInputRef.current?.click()}
-        onDeleteArtifact={handleDeleteArtifact}
-        onCopySessionId={handleCopySessionId}
-        isStreaming={isStreaming}
-      />
+      >
+        {isRightSidebarOpen && (
+          <div
+            className="hidden md:block absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/50 active:bg-primary z-50 transition-colors group"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              setIsResizingRight(true)
+            }}
+            onDoubleClick={() => setRightWidth(280)}
+            title="Drag to resize artifacts panel (double click to reset)"
+          />
+        )}
+        <ControlPanel
+          key={currentSessionId ?? 'new-session'}
+          className="w-full h-full"
+          showCloseButton
+          onClose={() => setIsRightSidebarOpen(false)}
+          currentSessionId={currentSessionId}
+          artifacts={artifacts}
+          artifactStatus={artifactStatus}
+          artifactOperationError={artifactOperationError}
+          onArtifactUploadClick={() => artifactInputRef.current?.click()}
+          onDeleteArtifact={(artifact) => void handleDeleteArtifact(artifact)}
+          onDownloadArtifact={(artifact) => void handleDownloadArtifact(artifact)}
+          onRetryArtifacts={() => {
+            setArtifactStatus('loading')
+            setArtifactReload((value) => value + 1)
+          }}
+          onCopySessionId={handleCopySessionId}
+          isStreaming={isStreaming || currentSessionDeleting}
+        />
+      </div>
     </div>
   )
 }
