@@ -12,7 +12,6 @@ import pytest
 from app.db.models import (
     ArtifactOutputKind,
     ArtifactSource,
-    CleanupJob,
     CleanupOperation,
     CleanupState,
 )

@@ -71,7 +71,12 @@ jobs:
         working-directory: backend
       - run: uv run alembic -c alembic.ini upgrade head
         working-directory: backend
-      - run: test "$(PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U rootagent -d rootagent -tAc 'select version_num from alembic_version')" = "006"
+      - name: Assert alembic_version matches head
+        working-directory: backend
+        run: |
+          expected="$(uv run alembic -c alembic.ini heads | awk '{print $1}')"
+          actual="$(PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U rootagent -d rootagent -tAc 'select version_num from alembic_version')"
+          test "$actual" = "$expected"
 
   frontend:
     runs-on: ubuntu-latest

@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { ChatMain, groupMessagesIntoBlocks } from '@/components/chat/ChatMain'
+import { ChatMain } from '@/components/chat/ChatMain'
+import { groupMessagesIntoBlocks } from '@/components/chat/groupMessagesIntoBlocks'
 import type { Message } from '@/types'
 
 const userMessage: Message = {

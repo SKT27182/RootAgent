@@ -234,8 +234,8 @@ async def test_persistence_is_atomic_and_deduplicates_a_run_digest(tmp_path) -> 
     assert artifact.source is ArtifactSource.GENERATED
     assert artifact.output_kind is ArtifactOutputKind.CSV
     assert artifact.sha256 == digest
-    assert f"/generated/" in artifact.storage_path
-    assert f"/runs/" not in artifact.storage_path
+    assert "/generated/" in artifact.storage_path
+    assert "/runs/" not in artifact.storage_path
     assert artifact.storage_path.endswith(f"/{artifact.id}")
     assert persisted[0].metadata.content_url.endswith(f"/{artifact.id}/content")
     assert persisted[0].metadata.preview_url.endswith(f"/{artifact.id}/preview")
